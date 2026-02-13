@@ -1,11 +1,57 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>szx-and-szy</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>猜成语游戏</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <h1>网站已成功上线</h1>
-    <p>如果你看到这行字，说明 GitHub Pages 正常工作。</p>
+    <div class="container">
+        <h1>猜成语游戏</h1>
+        
+        <!-- 游戏区域 -->
+        <div id="game-container">
+            <div class="game-info">
+                <div id="timer">时间: 100秒</div>
+                <div id="score">得分: 0</div>
+            </div>
+            
+            <div id="question-container">
+                <h2 id="question">点击开始游戏</h2>
+                <input type="text" id="answer" placeholder="请输入成语" disabled>
+                <button id="submit-answer" disabled>提交答案</button>
+                <button id="start-game">开始游戏</button>
+            </div>
+        </div>
+        
+        <!-- 结果提交区域 -->
+        <div id="result-container" style="display: none;">
+            <h2>游戏结束</h2>
+            <p>最终得分: <span id="final-score">0</span></p>
+            <form id="result-form">
+                <div class="form-group">
+                    <label for="student-id">学号 (8位数字):</label>
+                    <input type="text" id="student-id" required>
+                </div>
+                <div class="form-group">
+                    <label for="nickname">昵称 (不超过12个字符):</label>
+                    <input type="text" id="nickname" maxlength="12" required>
+                </div>
+                <button type="submit">提交成绩</button>
+            </form>
+        </div>
+        
+        <!-- 排行榜区域 -->
+        <div id="ranking-container">
+            <h2>排行榜</h2>
+            <div id="ranking-list">
+                <p>加载中...</p>
+            </div>
+        </div>
+    </div>
+    
+    <script src="script.js"></script>
 </body>
 </html>
