@@ -3,55 +3,219 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>猜成语游戏</title>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <title>成语猜猜猜 - 墨韵书香</title>
+    <meta name="description" content="看描述猜成语，挑战你的成语储备！限时答题，争夺排行榜高分！">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>猜成语游戏</h1>
-        
-        <!-- 游戏区域 -->
-        <div id="game-container">
-            <div class="game-info">
-                <div id="timer">时间: 100秒</div>
-                <div id="score">得分: 0</div>
-            </div>
-            
-            <div id="question-container">
-                <h2 id="question">点击开始游戏</h2>
-                <input type="text" id="answer" placeholder="请输入成语" disabled>
-                <button id="submit-answer" disabled>提交答案</button>
-                <button id="start-game">开始游戏</button>
-            </div>
-        </div>
-        
-        <!-- 结果提交区域 -->
-        <div id="result-container" style="display: none;">
-            <h2>游戏结束</h2>
-            <p>最终得分: <span id="final-score">0</span></p>
-            <form id="result-form">
-                <div class="form-group">
-                    <label for="student-id">学号 (8位数字):</label>
-                    <input type="text" id="student-id" required>
-                </div>
-                <div class="form-group">
-                    <label for="nickname">昵称 (不超过12个字符):</label>
-                    <input type="text" id="nickname" maxlength="12" required>
-                </div>
-                <button type="submit">提交成绩</button>
-            </form>
-        </div>
-        
-        <!-- 排行榜区域 -->
-        <div id="ranking-container">
-            <h2>排行榜</h2>
-            <div id="ranking-list">
-                <p>加载中...</p>
-            </div>
-        </div>
+    <!-- 背景装饰 -->
+    <div class="bg-decoration">
+        <div class="ink-wash"></div>
+        <div class="bamboo bamboo-1"></div>
+        <div class="bamboo bamboo-2"></div>
+        <div class="mountain"></div>
+        <div class="cloud cloud-1"></div>
+        <div class="cloud cloud-2"></div>
+        <div class="cloud cloud-3"></div>
     </div>
-    
+
+    <div class="container">
+        <!-- 标题 -->
+        <header>
+            <div class="title-wrapper">
+                <div class="seal">猜</div>
+                <h1>成语猜猜猜</h1>
+                <div class="subtitle-wrapper">
+                    <span class="brush-stroke"></span>
+                    <p class="subtitle">墨韵书香 · 传承经典</p>
+                </div>
+            </div>
+        </header>
+
+        <!-- 主菜单 -->
+        <div id="menu-screen" class="screen">
+            <div class="card scroll-card">
+                <div class="scroll-top"></div>
+                <div class="scroll-content">
+                    <div class="rules-header">
+                        <span class="decoration-left">❖</span>
+                        <h2>游 戏 规 则</h2>
+                        <span class="decoration-right">❖</span>
+                    </div>
+                    <div class="rules-content">
+                        <div class="rule-item">
+                            <span class="rule-icon">⏳</span>
+                            <span class="rule-text">限时 <strong>100</strong> 秒，争分夺秒</span>
+                        </div>
+                        <div class="rule-item">
+                            <span class="rule-icon">📜</span>
+                            <span class="rule-text">看描述猜成语，答对 <strong>+1</strong> 分</span>
+                        </div>
+                        <div class="rule-item">
+                            <span class="rule-icon">🏆</span>
+                            <span class="rule-text">挑战高分，榜上有名</span>
+                        </div>
+                    </div>
+                    <div class="menu-buttons">
+                        <button class="btn btn-primary" onclick="startGame()">
+                            <span class="btn-bg"></span>
+                            <span class="btn-text">开始挑战</span>
+                        </button>
+                        <button class="btn btn-secondary" onclick="showLeaderboard()">
+                            <span class="btn-text">英雄榜</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="scroll-bottom"></div>
+            </div>
+        </div>
+
+        <!-- 游戏界面 -->
+        <div id="game-screen" class="screen hidden">
+            <!-- 状态栏 -->
+            <div class="game-header">
+                <div class="score-display">
+                    <div class="score-icon">章</div>
+                    <div class="score-info">
+                        <span class="score-label">得分</span>
+                        <span id="score" class="score-value">0</span>
+                    </div>
+                </div>
+                <div class="timer-display">
+                    <div class="timer-dial">
+                        <svg viewBox="0 0 100 100">
+                            <circle class="timer-bg" cx="50" cy="50" r="45"/>
+                            <circle id="timer-circle" class="timer-progress" cx="50" cy="50" r="45"/>
+                        </svg>
+                        <div class="timer-text">
+                            <span id="timer">1:40</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 题目区域 -->
+            <div class="question-card">
+                <div class="question-header">
+                    <span class="question-label">第 <span id="question-number">1</span> 题</span>
+                    <span class="answered-count">已答 <span id="answered-count">0</span> 题</span>
+                </div>
+                <div class="question-body">
+                    <div class="question-scroll">
+                        <p id="question-text">题目加载中...</p>
+                    </div>
+                </div>
+                <div class="answer-section">
+                    <div class="input-wrapper">
+                        <input type="text" id="answer-input" placeholder="挥毫写下你的答案..." autocomplete="off">
+                        <span class="input-decoration"></span>
+                    </div>
+                    <button class="btn btn-submit" onclick="submitAnswer()" id="submit-btn">
+                        <span class="btn-text">确 认</span>
+                    </button>
+                </div>
+                <!-- 反馈信息 -->
+                <div id="feedback" class="feedback hidden">
+                    <div class="feedback-icon"></div>
+                    <span class="feedback-text"></span>
+                </div>
+            </div>
+
+            <button class="btn btn-text" onclick="endGame()">提前交卷</button>
+        </div>
+
+        <!-- 游戏结束 -->
+        <div id="result-screen" class="screen hidden">
+            <div class="card result-card">
+                <div class="result-header">
+                    <div class="result-seal">终</div>
+                    <h2>挑战完成</h2>
+                </div>
+                <div class="result-body">
+                    <div class="final-score-display">
+                        <div class="score-circle">
+                            <svg viewBox="0 0 200 200">
+                                <circle class="score-circle-bg" cx="100" cy="100" r="90"/>
+                                <circle id="score-circle" class="score-circle-progress" cx="100" cy="100" r="90"/>
+                            </svg>
+                            <div class="score-inner">
+                                <span id="final-score" class="final-score-number">0</span>
+                                <span class="final-score-label">分</span>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="result-info">共作答 <span id="total-answered">0</span> 道题</p>
+                    
+                    <!-- 提交分数表单 -->
+                    <div class="submit-section">
+                        <h3>留名英雄榜</h3>
+                        <div class="form-group">
+                            <label>学号</label>
+                            <input type="text" id="student-id-input" placeholder="8位数字学号" maxlength="8">
+                        </div>
+                        <div class="form-group">
+                            <label>雅号</label>
+                            <input type="text" id="nickname-input" placeholder="你的昵称" maxlength="12">
+                        </div>
+                        <button class="btn btn-primary" onclick="submitScore()">
+                            <span class="btn-text">榜上留名</span>
+                        </button>
+                        <p id="submit-message" class="message hidden"></p>
+                    </div>
+                </div>
+                <div class="result-footer">
+                    <button class="btn btn-secondary" onclick="startGame()">
+                        <span class="btn-text">再战一局</span>
+                    </button>
+                    <button class="btn btn-secondary" onclick="showLeaderboard()">
+                        <span class="btn-text">英雄榜</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 排行榜 -->
+        <div id="leaderboard-screen" class="screen hidden">
+            <div class="card leaderboard-card">
+                <div class="leaderboard-header">
+                    <div class="leaderboard-title">
+                        <span class="trophy-icon">🏆</span>
+                        <h2>英 雄 榜</h2>
+                    </div>
+                    <p class="leaderboard-subtitle">榜上有名，青史留芳</p>
+                </div>
+                <div id="leaderboard-content" class="leaderboard-content">
+                    <div class="loading-state">
+                        <div class="loading-spinner"></div>
+                        <span>加载中...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="leaderboard-actions">
+                <button class="btn btn-secondary" onclick="loadLeaderboard()">
+                    <span class="btn-text">刷新榜单</span>
+                </button>
+                <button class="btn btn-secondary" onclick="showMenu()">
+                    <span class="btn-text">返回首页</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 页脚 -->
+        <footer>
+            <div class="footer-content">
+                <span class="footer-decoration">◆</span>
+                <span>成语猜猜猜 · 墨韵书香</span>
+                <span class="footer-decoration">◆</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Supabase CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="script.js"></script>
 </body>
 </html>
