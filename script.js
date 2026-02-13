@@ -33,23 +33,38 @@ let score = 0;
 let timerInterval;
 let currentQuestion;
 
-// DOM元素
-const timerElement = document.getElementById('timer');
-const scoreElement = document.getElementById('score');
-const questionElement = document.getElementById('question');
-const answerInput = document.getElementById('answer');
-const submitAnswerBtn = document.getElementById('submit-answer');
-const startGameBtn = document.getElementById('start-game');
-const gameContainer = document.getElementById('game-container');
-const resultContainer = document.getElementById('result-container');
-const finalScoreElement = document.getElementById('final-score');
-const resultForm = document.getElementById('result-form');
-const studentIdInput = document.getElementById('student-id');
-const nicknameInput = document.getElementById('nickname');
-const rankingList = document.getElementById('ranking-list');
+// DOM元素变量
+let timerElement;
+let scoreElement;
+let questionElement;
+let answerInput;
+let submitAnswerBtn;
+let startGameBtn;
+let gameContainer;
+let resultContainer;
+let finalScoreElement;
+let resultForm;
+let studentIdInput;
+let nicknameInput;
+let rankingList;
 
 // 初始化
 function init() {
+    // 获取DOM元素
+    timerElement = document.getElementById('timer');
+    scoreElement = document.getElementById('score');
+    questionElement = document.getElementById('question');
+    answerInput = document.getElementById('answer');
+    submitAnswerBtn = document.getElementById('submit-answer');
+    startGameBtn = document.getElementById('start-game');
+    gameContainer = document.getElementById('game-container');
+    resultContainer = document.getElementById('result-container');
+    finalScoreElement = document.getElementById('final-score');
+    resultForm = document.getElementById('result-form');
+    studentIdInput = document.getElementById('student-id');
+    nicknameInput = document.getElementById('nickname');
+    rankingList = document.getElementById('ranking-list');
+    
     loadRanking();
     startGameBtn.addEventListener('click', startGame);
     submitAnswerBtn.addEventListener('click', checkAnswer);
@@ -259,5 +274,5 @@ function resetForm() {
     resultForm.reset();
 }
 
-// 初始化应用
-init();
+// 当DOM加载完成后初始化应用
+document.addEventListener('DOMContentLoaded', init);
