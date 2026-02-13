@@ -255,7 +255,7 @@ function loadLeaderboard() {
     var content = document.getElementById('leaderboard-content');
     content.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><span>加载中...</span></div>';
 
-    supabaseClient.from('排行榜').select('*').order('score', { ascending: false }).limit(50)
+    supabaseClient.from('排行榜').select('*').order('分数', { ascending: false }).limit(50)
         .then(function(result) {
             var data = result.data;
             var error = result.error;
@@ -284,9 +284,9 @@ function loadLeaderboard() {
 
                 html += '<tr>';
                 html += '<td class="rank-cell ' + rankClass + '"><span class="rank-badge">' + rankDisplay + '</span></td>';
-                html += '<td class="nickname-cell">' + escapeHtml(record.nickname) + '</td>';
-                html += '<td class="score-cell"><span class="score-tag ' + (rank <= 3 ? 'top3' : 'normal') + '">' + record.score + '</span></td>';
-                html += '<td class="time-cell">' + formatDate(record.updated_at) + '</td>';
+                html += '<td class="nickname-cell">' + escapeHtml(record.昵称) + '</td>';
+                html += '<td class="score-cell"><span class="score-tag ' + (rank <= 3 ? 'top3' : 'normal') + '">' + record.分数 + '</span></td>';
+                html += '<td class="time-cell">' + formatDate(record.时间) + '</td>';
                 html += '</tr>';
             }
 
@@ -317,7 +317,9 @@ function submitScore() {
         return;
     }
 
-    supabaseClient.from('排行榜').select('*').eq('student_id', studentId).single()
+    var studentIdNum = parseInt(studentId, 10);
+    
+    supabaseClient.from('排行榜').select('*').eq('学号', studentIdNum).single()
         .then(function(result) {
             var existingRecord = result.data;
             var queryError = result.error;
@@ -328,22 +330,22 @@ function submitScore() {
             }
 
             if (existingRecord) {
-                if (score > existingRecord.score) {
-                    return supabaseClient.from('leaderboard').update({
-                        nickname: nickname,
-                        score: score,
-                        updated_at: new Date().toISOString()
-                    }).eq('student_id', studentId);
+                if (score > existingRecord.分数) {
+                    return supabaseClient.from('排行榜').update({
+                        昵称: nickname,
+                        分数: score,
+                        时间: new Date().toISOString().split('T')[0]
+                    }).eq('学号', studentIdNum);
                 } else {
-                    showSubmitMessage('未超过历史最高分（' + existingRecord.score + '分）', 'error');
+                    showSubmitMessage('未超过历史最高分（' + existingRecord.分数 + '分）', 'error');
                     return Promise.reject('skip');
                 }
             } else {
-                return supabaseClient.from('leaderboard').insert({
-                    student_id: studentId,
-                    nickname: nickname,
-                    score: score,
-                    updated_at: new Date().toISOString()
+                return supabaseClient.from('排行榜').insert({
+                    学号: studentIdNum,
+                    昵称: nickname,
+                    分数: score,
+                    时间: new Date().toISOString().split('T')[0]
                 });
             }
         })
@@ -390,16 +392,14 @@ function hideSubmitMessage() {
 }
 
 function formatDate(dateString) {
+    if (!dateString) return '-';
     var date = new Date(dateString);
+    var year = date.getFullYear();
     var month = (date.getMonth() + 1).toString();
     var day = date.getDate().toString();
-    var hour = date.getHours().toString();
-    var minute = date.getMinutes().toString();
     if (month.length === 1) month = '0' + month;
     if (day.length === 1) day = '0' + day;
-    if (hour.length === 1) hour = '0' + hour;
-    if (minute.length === 1) minute = '0' + minute;
-    return month + '/' + day + ' ' + hour + ':' + minute;
+    return year + '/' + month + '/' + day;
 }
 
 function escapeHtml(str) {
