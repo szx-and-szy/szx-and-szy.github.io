@@ -1,6 +1,6 @@
 // Supabase 配置
 var SUPABASE_URL = 'https://ntjcnmsrjqllmaynhasf.supabase.co';
-var SUPABASE_ANON_KEY = 'sb_publishable_mM9NXFFP7mtvYz1duoXbEg_i1brWES7';
+var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50amNubXNyanFsbG1heW5oYXNmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA4ODM4NDEsImV4cCI6MjA4NjQ1OTg0MX0.vDkc6hGVkbXc8hozCgOJWEPoDslOmtfyhNKc15or4Uo';
 var supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // 题库
