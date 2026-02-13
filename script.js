@@ -1,12 +1,10 @@
-// ==================== Supabase 配置 ====================
-const SUPABASE_URL = 'https://ntjcnmsrjqllmaynhasf.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_mM9NXFFP7mtvYz1duoXbEg_i1brWES7';
+// Supabase 配置
+var SUPABASE_URL = 'https://ntjcnmsrjqllmaynhasf.supabase.co';
+var SUPABASE_ANON_KEY = 'sb_publishable_mM9NXFFP7mtvYz1duoXbEg_i1brWES7';
+var supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// 创建 Supabase 客户端（使用不同的变量名避免冲突）
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// ==================== 题库（60道成语） ====================
-const questions = [
+// 题库
+var questions = [
     { id: 1, description: "形容人非常高兴，像雀儿一样跳跃", answer: "欢呼雀跃" },
     { id: 2, description: "比喻事情很容易做", answer: "易如反掌" },
     { id: 3, description: "形容人勇敢不怕死", answer: "视死如归" },
@@ -66,25 +64,24 @@ const questions = [
     { id: 57, description: "比喻彼此相当，不分高下", answer: "旗鼓相当" },
     { id: 58, description: "比喻不顾事实，随意乱说", answer: "信口开河" },
     { id: 59, description: "形容一个人仪表端庄，神采奕奕", answer: "风度翩翩" },
-    { id: 60, description: "比喻一个人气量狭小，计较小事", answer: "斤斤计较" },
+    { id: 60, description: "比喻一个人气量狭小，计较小事", answer: "斤斤计较" }
 ];
 
-// ==================== 游戏状态变量 ====================
-const GAME_DURATION = 100;
-const MAX_QUESTIONS = 60;
+// 游戏状态
+var GAME_DURATION = 100;
+var score = 0;
+var timeLeft = GAME_DURATION;
+var currentQuestion = null;
+var answeredIds = [];
+var timerInterval = null;
+var isAnswering = false;
 
-let score = 0;
-let timeLeft = GAME_DURATION;
-let currentQuestion = null;
-let answeredIds = [];
-let timerInterval = null;
-let isAnswering = false;
-
-// ==================== 屏幕切换 ====================
+// 屏幕切换
 function showScreen(screenId) {
-    document.querySelectorAll('.screen').forEach(screen => {
-        screen.classList.add('hidden');
-    });
+    var screens = document.querySelectorAll('.screen');
+    for (var i = 0; i < screens.length; i++) {
+        screens[i].classList.add('hidden');
+    }
     document.getElementById(screenId).classList.remove('hidden');
 }
 
@@ -97,41 +94,33 @@ function showLeaderboard() {
     loadLeaderboard();
 }
 
-// ==================== 游戏逻辑 ====================
+// 开始游戏
 function startGame() {
-    // 重置游戏状态
     score = 0;
     timeLeft = GAME_DURATION;
     answeredIds = [];
     currentQuestion = null;
     isAnswering = false;
 
-    // 更新显示
     updateScore();
     updateTimer();
     updateTimerCircle();
 
-    // 切换到游戏界面
     showScreen('game-screen');
-
-    // 获取第一道题
     getNextQuestion();
-
-    // 启动计时器
     startTimer();
 
-    // 聚焦输入框
-    setTimeout(() => {
+    setTimeout(function() {
         document.getElementById('answer-input').focus();
     }, 100);
 }
 
+// 计时器
 function startTimer() {
-    timerInterval = setInterval(() => {
+    timerInterval = setInterval(function() {
         timeLeft--;
         updateTimer();
         updateTimerCircle();
-
         if (timeLeft <= 0) {
             endGame();
         }
@@ -139,15 +128,15 @@ function startTimer() {
 }
 
 function updateTimer() {
-    const minutes = Math.floor(timeLeft / 60);
-    const seconds = timeLeft % 60;
-    document.getElementById('timer').textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    var minutes = Math.floor(timeLeft / 60);
+    var seconds = timeLeft % 60;
+    document.getElementById('timer').textContent = minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
 }
 
 function updateTimerCircle() {
-    const circle = document.getElementById('timer-circle');
-    const circumference = 2 * Math.PI * 45;
-    const offset = circumference * (1 - timeLeft / GAME_DURATION);
+    var circle = document.getElementById('timer-circle');
+    var circumference = 2 * Math.PI * 45;
+    var offset = circumference * (1 - timeLeft / GAME_DURATION);
     circle.style.strokeDasharray = circumference;
     circle.style.strokeDashoffset = offset;
 }
@@ -156,15 +145,21 @@ function updateScore() {
     document.getElementById('score').textContent = score;
 }
 
+// 获取下一题
 function getNextQuestion() {
-    const available = questions.filter(q => !answeredIds.includes(q.id));
+    var available = [];
+    for (var i = 0; i < questions.length; i++) {
+        if (answeredIds.indexOf(questions[i].id) === -1) {
+            available.push(questions[i]);
+        }
+    }
 
     if (available.length === 0) {
         endGame();
         return;
     }
 
-    const randomIndex = Math.floor(Math.random() * available.length);
+    var randomIndex = Math.floor(Math.random() * available.length);
     currentQuestion = available[randomIndex];
 
     document.getElementById('question-text').textContent = currentQuestion.description;
@@ -172,11 +167,12 @@ function getNextQuestion() {
     document.getElementById('answered-count').textContent = answeredIds.length;
 }
 
+// 提交答案
 function submitAnswer() {
     if (isAnswering || !currentQuestion) return;
 
-    const input = document.getElementById('answer-input');
-    const userAnswer = input.value.trim();
+    var input = document.getElementById('answer-input');
+    var userAnswer = input.value.trim();
 
     if (!userAnswer) return;
 
@@ -184,19 +180,19 @@ function submitAnswer() {
     input.disabled = true;
     document.getElementById('submit-btn').disabled = true;
 
-    const isCorrect = checkAnswer(userAnswer, currentQuestion.answer);
+    var isCorrect = checkAnswer(userAnswer, currentQuestion.answer);
 
     if (isCorrect) {
         score++;
         updateScore();
         showFeedback('correct', '回答正确！+1分');
     } else {
-        showFeedback('wrong', `正确答案是：${currentQuestion.answer}`);
+        showFeedback('wrong', '正确答案是：' + currentQuestion.answer);
     }
 
     answeredIds.push(currentQuestion.id);
 
-    setTimeout(() => {
+    setTimeout(function() {
         hideFeedback();
         input.value = '';
         input.disabled = false;
@@ -208,13 +204,15 @@ function submitAnswer() {
 }
 
 function checkAnswer(userAnswer, correctAnswer) {
-    const normalize = (str) => str.trim().replace(/\s+/g, '').toLowerCase();
+    var normalize = function(str) {
+        return str.trim().replace(/\s+/g, '').toLowerCase();
+    };
     return normalize(userAnswer) === normalize(correctAnswer);
 }
 
 function showFeedback(type, message) {
-    const feedback = document.getElementById('feedback');
-    feedback.className = `feedback ${type}`;
+    var feedback = document.getElementById('feedback');
+    feedback.className = 'feedback ' + type;
     feedback.querySelector('.feedback-text').textContent = message;
 }
 
@@ -222,6 +220,7 @@ function hideFeedback() {
     document.getElementById('feedback').className = 'feedback hidden';
 }
 
+// 结束游戏
 function endGame() {
     if (timerInterval) {
         clearInterval(timerInterval);
@@ -230,249 +229,193 @@ function endGame() {
 
     document.getElementById('final-score').textContent = score;
     document.getElementById('total-answered').textContent = answeredIds.length;
-
     document.getElementById('student-id-input').value = '';
     document.getElementById('nickname-input').value = '';
     hideSubmitMessage();
 
     showScreen('result-screen');
 
-    setTimeout(() => {
+    setTimeout(function() {
         animateScoreCircle();
     }, 300);
 }
 
 function animateScoreCircle() {
-    const circle = document.getElementById('score-circle');
-    const circumference = 2 * Math.PI * 90;
-    const maxScore = Math.min(MAX_QUESTIONS, answeredIds.length > 0 ? answeredIds.length : 1);
-    const percentage = score / maxScore;
-    const offset = circumference * (1 - percentage);
-    
+    var circle = document.getElementById('score-circle');
+    var circumference = 2 * Math.PI * 90;
+    var maxScore = Math.min(60, answeredIds.length > 0 ? answeredIds.length : 1);
+    var percentage = score / maxScore;
+    var offset = circumference * (1 - percentage);
     circle.style.strokeDasharray = circumference;
     circle.style.strokeDashoffset = offset;
 }
 
-// ==================== 排行榜 ====================
-async function loadLeaderboard() {
-    const content = document.getElementById('leaderboard-content');
-    content.innerHTML = `
-        <div class="loading-state">
-            <div class="loading-spinner"></div>
-            <span>加载中...</span>
-        </div>
-    `;
+// 加载排行榜
+function loadLeaderboard() {
+    var content = document.getElementById('leaderboard-content');
+    content.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><span>加载中...</span></div>';
 
-    try {
-        const { data, error } = await supabaseClient
-            .from('leaderboard')
-            .select('*')
-            .order('score', { ascending: false })
-            .limit(50);
+    supabaseClient.from('leaderboard').select('*').order('score', { ascending: false }).limit(50)
+        .then(function(result) {
+            var data = result.data;
+            var error = result.error;
 
-        if (error) {
-            content.innerHTML = '<div class="no-data">加载失败，请点击刷新重试</div>';
-            return;
-        }
-
-        if (!data || data.length === 0) {
-            content.innerHTML = '<div class="no-data">暂无记录，快来榜上留名！</div>';
-            return;
-        }
-
-        let html = `
-            <table class="leaderboard-table">
-                <thead>
-                    <tr>
-                        <th class="rank-cell">排名</th>
-                        <th>雅号</th>
-                        <th class="score-cell">分数</th>
-                        <th class="time-cell">时间</th>
-                    </tr>
-                </thead>
-                <tbody>
-        `;
-
-        data.forEach((record, index) => {
-            const rank = index + 1;
-            let rankClass = 'rank-other';
-            let rankDisplay = rank;
-            
-            if (rank === 1) {
-                rankClass = 'rank-1';
-                rankDisplay = '🥇';
-            } else if (rank === 2) {
-                rankClass = 'rank-2';
-                rankDisplay = '🥈';
-            } else if (rank === 3) {
-                rankClass = 'rank-3';
-                rankDisplay = '🥉';
+            if (error) {
+                content.innerHTML = '<div class="no-data">加载失败，请点击刷新重试</div>';
+                return;
             }
-            
-            const scoreTagClass = rank <= 3 ? 'top3' : 'normal';
-            const time = formatDate(record.updated_at);
 
-            html += `
-                <tr>
-                    <td class="rank-cell ${rankClass}">
-                        <span class="rank-badge">${rankDisplay}</span>
-                    </td>
-                    <td class="nickname-cell">${escapeHtml(record.nickname)}</td>
-                    <td class="score-cell">
-                        <span class="score-tag ${scoreTagClass}">${record.score}</span>
-                    </td>
-                    <td class="time-cell">${time}</td>
-                </tr>
-            `;
+            if (!data || data.length === 0) {
+                content.innerHTML = '<div class="no-data">暂无记录，快来榜上留名！</div>';
+                return;
+            }
+
+            var html = '<table class="leaderboard-table"><thead><tr><th class="rank-cell">排名</th><th>雅号</th><th class="score-cell">分数</th><th class="time-cell">时间</th></tr></thead><tbody>';
+
+            for (var i = 0; i < data.length; i++) {
+                var record = data[i];
+                var rank = i + 1;
+                var rankClass = 'rank-other';
+                var rankDisplay = rank;
+
+                if (rank === 1) { rankClass = 'rank-1'; rankDisplay = '🥇'; }
+                else if (rank === 2) { rankClass = 'rank-2'; rankDisplay = '🥈'; }
+                else if (rank === 3) { rankClass = 'rank-3'; rankDisplay = '🥉'; }
+
+                html += '<tr>';
+                html += '<td class="rank-cell ' + rankClass + '"><span class="rank-badge">' + rankDisplay + '</span></td>';
+                html += '<td class="nickname-cell">' + escapeHtml(record.nickname) + '</td>';
+                html += '<td class="score-cell"><span class="score-tag ' + (rank <= 3 ? 'top3' : 'normal') + '">' + record.score + '</span></td>';
+                html += '<td class="time-cell">' + formatDate(record.updated_at) + '</td>';
+                html += '</tr>';
+            }
+
+            html += '</tbody></table>';
+            content.innerHTML = html;
+        })
+        .catch(function(err) {
+            content.innerHTML = '<div class="no-data">加载失败，请点击刷新重试</div>';
         });
-
-        html += '</tbody></table>';
-        content.innerHTML = html;
-
-    } catch (err) {
-        content.innerHTML = '<div class="no-data">加载失败，请点击刷新重试</div>';
-    }
 }
 
-// ==================== 提交分数 ====================
-async function submitScore() {
-    const studentIdInput = document.getElementById('student-id-input');
-    const nicknameInput = document.getElementById('nickname-input');
+// 提交分数
+function submitScore() {
+    var studentIdInput = document.getElementById('student-id-input');
+    var nicknameInput = document.getElementById('nickname-input');
+    var studentId = studentIdInput.value.trim();
+    var nickname = nicknameInput.value.trim();
 
-    const studentId = studentIdInput.value.trim();
-    const nickname = nicknameInput.value.trim();
-
-    const studentIdError = validateStudentId(studentId);
+    var studentIdError = validateStudentId(studentId);
     if (studentIdError) {
         showSubmitMessage(studentIdError, 'error');
         return;
     }
 
-    const nicknameError = validateNickname(nickname);
+    var nicknameError = validateNickname(nickname);
     if (nicknameError) {
         showSubmitMessage(nicknameError, 'error');
         return;
     }
 
-    try {
-        const { data: existingRecord, error: queryError } = await supabaseClient
-            .from('leaderboard')
-            .select('*')
-            .eq('student_id', studentId)
-            .single();
+    supabaseClient.from('leaderboard').select('*').eq('student_id', studentId).single()
+        .then(function(result) {
+            var existingRecord = result.data;
+            var queryError = result.error;
 
-        if (queryError && queryError.code !== 'PGRST116') {
-            showSubmitMessage('查询失败，请重试', 'error');
-            return;
-        }
+            if (queryError && queryError.code !== 'PGRST116') {
+                showSubmitMessage('查询失败，请重试', 'error');
+                return;
+            }
 
-        if (existingRecord) {
-            if (score > existingRecord.score) {
-                const { error: updateError } = await supabaseClient
-                    .from('leaderboard')
-                    .update({
+            if (existingRecord) {
+                if (score > existingRecord.score) {
+                    return supabaseClient.from('leaderboard').update({
                         nickname: nickname,
                         score: score,
                         updated_at: new Date().toISOString()
-                    })
-                    .eq('student_id', studentId);
-
-                if (updateError) {
-                    showSubmitMessage('更新失败，请重试', 'error');
+                    }).eq('student_id', studentId);
                 } else {
-                    showSubmitMessage('恭喜！成绩已更新！', 'success');
-                    studentIdInput.value = '';
-                    nicknameInput.value = '';
+                    showSubmitMessage('未超过历史最高分（' + existingRecord.score + '分）', 'error');
+                    return Promise.reject('skip');
                 }
             } else {
-                showSubmitMessage(`未超过历史最高分（${existingRecord.score}分）`, 'error');
-            }
-        } else {
-            const { error: insertError } = await supabaseClient
-                .from('leaderboard')
-                .insert({
+                return supabaseClient.from('leaderboard').insert({
                     student_id: studentId,
                     nickname: nickname,
                     score: score,
                     updated_at: new Date().toISOString()
                 });
-
-            if (insertError) {
+            }
+        })
+        .then(function(result) {
+            if (result && result.error) {
                 showSubmitMessage('提交失败，请重试', 'error');
-            } else {
+            } else if (result) {
                 showSubmitMessage('恭喜！榜上留名成功！', 'success');
                 studentIdInput.value = '';
                 nicknameInput.value = '';
             }
-        }
-    } catch (err) {
-        showSubmitMessage('提交失败，请重试', 'error');
-    }
+        })
+        .catch(function(err) {
+            if (err !== 'skip') {
+                showSubmitMessage('提交失败，请重试', 'error');
+            }
+        });
 }
 
 function validateStudentId(studentId) {
     if (!/^\d{8}$/.test(studentId)) {
         return '学号必须是8位数字';
     }
-
-    const year = parseInt(studentId.substring(0, 4), 10);
-    const currentYear = new Date().getFullYear();
-
-    if (year < 2000) {
-        return '学号前四位年份不能早于2000年';
-    }
-
-    if (year > currentYear) {
-        return '学号前四位年份不能大于当前年份';
-    }
-
+    var year = parseInt(studentId.substring(0, 4), 10);
+    if (year < 2000) return '学号前四位年份不能早于2000年';
+    if (year > new Date().getFullYear()) return '学号前四位年份不能大于当前年份';
     return null;
 }
 
 function validateNickname(nickname) {
-    if (!nickname || nickname.length === 0) {
-        return '请输入你的雅号';
-    }
-
-    if (nickname.length > 12) {
-        return '雅号不能超过12个字符';
-    }
-
+    if (!nickname || nickname.length === 0) return '请输入你的雅号';
+    if (nickname.length > 12) return '雅号不能超过12个字符';
     return null;
 }
 
 function showSubmitMessage(message, type) {
-    const msgElement = document.getElementById('submit-message');
-    msgElement.textContent = message;
-    msgElement.className = `message ${type}`;
+    var el = document.getElementById('submit-message');
+    el.textContent = message;
+    el.className = 'message ' + type;
 }
 
 function hideSubmitMessage() {
     document.getElementById('submit-message').className = 'message hidden';
 }
 
-// ==================== 工具函数 ====================
 function formatDate(dateString) {
-    const date = new Date(dateString);
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hour = String(date.getHours()).padStart(2, '0');
-    const minute = String(date.getMinutes()).padStart(2, '0');
-    return `${month}/${day} ${hour}:${minute}`;
+    var date = new Date(dateString);
+    var month = (date.getMonth() + 1).toString();
+    var day = date.getDate().toString();
+    var hour = date.getHours().toString();
+    var minute = date.getMinutes().toString();
+    if (month.length === 1) month = '0' + month;
+    if (day.length === 1) day = '0' + day;
+    if (hour.length === 1) hour = '0' + hour;
+    if (minute.length === 1) minute = '0' + minute;
+    return month + '/' + day + ' ' + hour + ':' + minute;
 }
 
 function escapeHtml(str) {
-    const div = document.createElement('div');
+    var div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
 }
 
-// ==================== 键盘事件 ====================
+// 键盘事件
 document.addEventListener('keypress', function(e) {
     if (e.key === 'Enter') {
-        const gameScreen = document.getElementById('game-screen');
+        var gameScreen = document.getElementById('game-screen');
         if (!gameScreen.classList.contains('hidden') && !isAnswering) {
             submitAnswer();
         }
     }
 });
+
+console.log('成语猜猜猜游戏脚本加载完成');
