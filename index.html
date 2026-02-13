@@ -215,7 +215,15 @@
     </div>
 
     <!-- Supabase CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <script>
+        // 检查 Supabase 是否加载成功
+        if (!window.supabase) {
+            console.error('Supabase 加载失败！请检查网络连接');
+        } else {
+            console.log('Supabase 加载成功');
+        }
+    </script>
     <script src="script.js"></script>
 </body>
 </html>

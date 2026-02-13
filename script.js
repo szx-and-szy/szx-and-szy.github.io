@@ -255,7 +255,7 @@ function loadLeaderboard() {
     var content = document.getElementById('leaderboard-content');
     content.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div><span>加载中...</span></div>';
 
-    supabaseClient.from('leaderboard').select('*').order('score', { ascending: false }).limit(50)
+    supabaseClient.from('排行榜').select('*').order('score', { ascending: false }).limit(50)
         .then(function(result) {
             var data = result.data;
             var error = result.error;
@@ -317,7 +317,7 @@ function submitScore() {
         return;
     }
 
-    supabaseClient.from('leaderboard').select('*').eq('student_id', studentId).single()
+    supabaseClient.from('排行榜').select('*').eq('student_id', studentId).single()
         .then(function(result) {
             var existingRecord = result.data;
             var queryError = result.error;
