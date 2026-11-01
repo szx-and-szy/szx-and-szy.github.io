@@ -11,6 +11,12 @@
 import * as THREE from 'three';
 import { computeScene } from './ephemeris.js';
 import { createTerrain } from './terrain.js';
+import { EffectComposer } from '../vendor/postprocessing/EffectComposer.js';
+import { RenderPass } from '../vendor/postprocessing/RenderPass.js';
+import { ShaderPass } from '../vendor/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from '../vendor/postprocessing/UnrealBloomPass.js';
+import { FXAAShader } from '../vendor/shaders/FXAAShader.js';
+import { OutputPass } from '../vendor/postprocessing/OutputPass.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -45,7 +51,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 0.84;  // 对齐阿波罗照片的曝光：月壤应落在中灰
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
@@ -55,6 +61,8 @@ const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 30
 camera.rotation.order = 'YXZ';
 scene.add(camera);
 
+const urlParams = new URLSearchParams(location.search);
+const postDisabled = urlParams.get('post') === '0';
 const isTouch = matchMedia('(pointer: coarse)').matches;
 const quality = isTouch ? 'low' : 'high';
 
@@ -169,6 +177,84 @@ earthMesh.rotation.z = THREE.MathUtils.degToRad(23.44);
   }));
   scene.add(stars);
 }
+
+/* ---------------- 后处理 ---------------- */
+
+/**
+ * 真实照片之所以不像渲染，很大一部分来自镜头与感光元件：
+ * 边缘色散、暗角、胶片颗粒、以及亮部的光学溢出。
+ * 这一层用 three.js 官方后处理链做，不手搓噪声。
+ */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+
+// 只有太阳级别的亮度才触发溢出，月壤本身不发光
+// 半分辨率足够：bloom 本身就是低频模糊，全分辨率只是白白多跑几遍全屏 pass
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(innerWidth * 0.5, innerHeight * 0.5),
+  0.62,  // strength
+  0.72,  // radius
+  0.90   // threshold：只让太阳/高光溢出
+);
+if (quality === 'high' && !postDisabled) composer.addPass(bloomPass);
+
+const fxaaPass = new ShaderPass(FXAAShader);
+function syncFxaa() {
+  const pr = renderer.getPixelRatio();
+  fxaaPass.material.uniforms['resolution'].value.set(1 / (innerWidth * pr), 1 / (innerHeight * pr));
+}
+syncFxaa();
+composer.addPass(fxaaPass);
+
+// 胶片颗粒 + 暗角：模拟 Apollo 所用的 70 mm 胶片与广角镜
+const FilmShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uTime: { value: 0 },
+    uGrain: { value: 0.022 },
+    uVignette: { value: 0.20 },
+  },
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tDiffuse;
+    uniform float uTime;
+    uniform float uGrain;
+    uniform float uVignette;
+    varying vec2 vUv;
+
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453123);
+    }
+
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+
+      // 暗角：真实镜头边缘衰减，月球照片同样存在
+      vec2 d = vUv - 0.5;
+      float vig = 1.0 - uVignette * dot(d, d) * 1.75;
+      c.rgb *= clamp(vig, 0.0, 1.0);
+
+      // 胶片颗粒：暗部更明显（高感光底片的特性）
+      float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+      float g = hash(vUv * vec2(1280.0, 800.0) + fract(uTime) * 91.7) - 0.5;
+      c.rgb += g * uGrain * (1.0 - lum * 0.55);
+
+      gl_FragColor = c;
+    }
+  `,
+};
+const filmPass = new ShaderPass(FilmShader);
+composer.addPass(filmPass);
+
+// 必须是最后一个 pass：EffectComposer 的 render target 保持线性空间，
+// 色调映射与 sRGB 转换只在直接渲染到屏幕时自动发生，中间层不会
+composer.addPass(new OutputPass());
 
 /* ---------------- 控制与物理 ---------------- */
 
@@ -328,6 +414,9 @@ if (isTouch) {
 /* ---------------- 主循环 ---------------- */
 
 const clock = new THREE.Clock();
+let perfFrames = 0;
+let perfStart = 0;
+let perfChecked = false;
 
 function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -388,7 +477,23 @@ function animate() {
   sunLight.position.copy(camera.position).addScaledVector(sunDir, 420);
   sunLight.target.position.copy(camera.position);
 
-  renderer.render(scene, camera);
+  filmPass.material.uniforms.uTime.value = clock.elapsedTime;
+
+  if (postDisabled) {
+    renderer.render(scene, camera);
+  } else {
+    // 开跑 4 秒后量一次帧率，太慢就先把最贵的 bloom 关掉（FXAA 与颗粒保留）
+    if (!perfChecked) {
+      perfFrames++;
+      if (!perfStart) perfStart = performance.now();
+      const elapsed = (performance.now() - perfStart) / 1000;
+      if (elapsed > 4) {
+        perfChecked = true;
+        if (perfFrames / elapsed < 26 && bloomPass.enabled) bloomPass.enabled = false;
+      }
+    }
+    composer.render();
+  }
 
   requestAnimationFrame(animate);
 }
@@ -419,6 +524,9 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  if (bloomPass.resolution) bloomPass.resolution.set(innerWidth * 0.5, innerHeight * 0.5);
+  syncFxaa();
 });
 
 $('enterBtn')?.addEventListener('click', () => {
