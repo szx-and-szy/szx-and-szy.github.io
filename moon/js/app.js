@@ -51,7 +51,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
 
-const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.05, 120000);
+const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 30000);
 camera.rotation.order = 'YXZ';
 scene.add(camera);
 
@@ -78,6 +78,11 @@ sunLight.shadow.normalBias = 0.035;
 scene.add(sunLight);
 scene.add(sunLight.target);
 
+// 地球反照光：满地球时月面背光侧照度约 0.02–0.05 lux 量级，
+// 加一层极弱冷色环境光，让背对太阳的地面保留轮廓而不是纯黑（阿波罗宇航员目视亦如此）
+const earthShine = new THREE.HemisphereLight(0x2f3b57, 0x17140f, 0.26);
+scene.add(earthShine);
+
 /* ---------------- 地形 ---------------- */
 
 const terrain = createTerrain({ quality });
@@ -85,7 +90,7 @@ scene.add(terrain.group);
 
 /* ---------------- 天体 ---------------- */
 
-const SKY_RADIUS = 15000;
+const SKY_RADIUS = 11000;
 
 // 太阳：角直径 0.53°，按距离换算实际半径
 const sunAngRad = THREE.MathUtils.degToRad(astro.sun.angDiamDeg) / 2;
@@ -102,9 +107,11 @@ scene.add(sunDisc);
   const c = document.createElement('canvas');
   c.width = c.height = 128;
   const g = c.getContext('2d').createRadialGradient(64, 64, 0, 64, 64, 64);
-  g.addColorStop(0, 'rgba(255,255,255,0.95)');
-  g.addColorStop(0.25, 'rgba(255,250,235,0.35)');
-  g.addColorStop(1, 'rgba(255,245,220,0)');
+  g.addColorStop(0, 'rgba(255,255,255,1.0)');
+  g.addColorStop(0.08, 'rgba(255,253,245,0.92)');
+  g.addColorStop(0.3, 'rgba(255,248,232,0.30)');
+  g.addColorStop(0.62, 'rgba(255,242,220,0.07)');
+  g.addColorStop(1, 'rgba(255,240,215,0)');
   const ctx = c.getContext('2d');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 128, 128);
@@ -113,7 +120,7 @@ scene.add(sunDisc);
     map: tex, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true,
     transparent: true, opacity: 0.9,
   }));
-  sprite.scale.setScalar(SKY_RADIUS * 0.06);
+  sprite.scale.setScalar(SKY_RADIUS * 0.085);
   sprite.position.copy(sunDir).multiplyScalar(SKY_RADIUS * 0.999);
   scene.add(sprite);
 }
@@ -130,7 +137,7 @@ earthTex.anisotropy = 4;
 
 const earthMesh = new THREE.Mesh(
   new THREE.SphereGeometry(1, 64, 48),
-  new THREE.MeshStandardMaterial({ map: earthTex, color: 0x9a9a9a, roughness: 0.92, metalness: 0 })
+  new THREE.MeshStandardMaterial({ map: earthTex, color: 0xffffff, roughness: 0.62, metalness: 0, emissive: 0x2b405f, emissiveIntensity: 0.75 })
 );
 earthMesh.scale.setScalar(earthRadius);
 earthGroup.add(earthMesh);
@@ -138,7 +145,7 @@ earthGroup.add(earthMesh);
 // 地球自转轴倾角 + 朝向（只做视觉，不参与相位计算）
 earthMesh.rotation.z = THREE.MathUtils.degToRad(23.44);
 
-// 星空：月球白昼其实看不见多少星，这里只留极淡的一层作为空间感
+// 星空：月球白昼看不见星（阿波罗照片天空纯黑），只留近乎不可见的一层，避免和太阳混淆
 {
   const N = 2600;
   const pos = new Float32Array(N * 3);
@@ -147,9 +154,9 @@ earthMesh.rotation.z = THREE.MathUtils.degToRad(23.44);
     const u = Math.random() * 2 - 1;
     const th = Math.random() * Math.PI * 2;
     const r = Math.sqrt(1 - u * u);
-    pos[i * 3] = Math.cos(th) * r * 30000;
-    pos[i * 3 + 1] = u * 30000;
-    pos[i * 3 + 2] = Math.sin(th) * r * 30000;
+    pos[i * 3] = Math.cos(th) * r * 20000;
+    pos[i * 3 + 1] = u * 20000;
+    pos[i * 3 + 2] = Math.sin(th) * r * 20000;
     const b = 0.35 + Math.pow(Math.random(), 3) * 0.65;
     col[i * 3] = b; col[i * 3 + 1] = b * 0.98; col[i * 3 + 2] = b * 0.94;
   }
@@ -158,7 +165,7 @@ earthMesh.rotation.z = THREE.MathUtils.degToRad(23.44);
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   const stars = new THREE.Points(geo, new THREE.PointsMaterial({
     size: 1.6, sizeAttenuation: false, vertexColors: true,
-    transparent: true, opacity: 0.10, depthWrite: false, depthTest: true,
+    transparent: true, opacity: 0.035, depthWrite: false, depthTest: true,
   }));
   scene.add(stars);
 }
@@ -168,7 +175,7 @@ earthMesh.rotation.z = THREE.MathUtils.degToRad(23.44);
 const state = {
   feet: terrain.heightAt(0, 0),
   vel: 0,
-  yaw: THREE.MathUtils.degToRad(88),   // 默认朝东（太阳方向）
+  yaw: THREE.MathUtils.degToRad(88),   // 开场会被 faceIntro 覆盖，此值仅作初值
   pitch: THREE.MathUtils.degToRad(6),
   onGround: true,
   bob: 0,
@@ -186,6 +193,7 @@ function applyLook() {
 
 addEventListener('keydown', (e) => {
   if (e.code === 'KeyE') { faceEarth(); return; }
+  if (e.code === 'KeyQ') { faceSun(); return; }
   state.keys.add(e.code);
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
     e.preventDefault();
@@ -212,17 +220,24 @@ document.addEventListener('mousemove', (e) => {
   applyLook();
 });
 
-function faceEarth() {
-  // 让相机直视地球：由地球方向反推 yaw/pitch（世界系 x=东, y=天, z=-北）
-  state.yaw = Math.atan2(-earthDir.x, -earthDir.z);
-  state.pitch = Math.asin(THREE.MathUtils.clamp(earthDir.y, -1, 1));
+function faceSun() {
+  // 太阳与地球相隔约 154°，不可能同框，只能按键切换
+  state.yaw = Math.atan2(-sunDir.x, -sunDir.z);
+  state.pitch = Math.asin(THREE.MathUtils.clamp(sunDir.y, -1, 1));
   applyLook();
 }
 
-/** 朝向地球所在的方位，但视线停在地平线略上方，让人同时看到地面和天空 */
-function faceEarthHorizon() {
+function faceEarth() {
+  // 朝向地球，但视线压低一档，让地平线留在画面下缘（正对 48.5° 会满屏黑天）
   state.yaw = Math.atan2(-earthDir.x, -earthDir.z);
-  state.pitch = THREE.MathUtils.degToRad(18);
+  state.pitch = Math.max(0.12, THREE.MathUtils.degToRad(astro.earth.altDeg - 17));
+  applyLook();
+}
+
+/** 开场：侧光方位，太阳与谷地同时入画（正对地球会背光，地面全黑） */
+function faceIntro() {
+  state.yaw = THREE.MathUtils.degToRad(-60);
+  state.pitch = THREE.MathUtils.degToRad(8);
   applyLook();
 }
 
@@ -240,6 +255,7 @@ window.__moon = {
     camera.fov = f;
     camera.updateProjectionMatrix();
   },
+  faceSun,
   heightAt: terrain.heightAt,
   earthDir: earthDir.toArray(),
   sunDir: sunDir.toArray(),
@@ -414,16 +430,6 @@ function fillStaticHud() {
   $('siteCoord').textContent = `${SITE.lat.toFixed(4)}°N  ${SITE.lon.toFixed(4)}°E`;
   $('siteTime').textContent = '1972-12-11 19:54:57 UTC';
 
-  $('sunAlt').textContent = `${astro.sun.altDeg.toFixed(2)}°`;
-  $('sunAz').textContent = `${astro.sun.azDeg.toFixed(1)}°`;
-  $('earthAlt').textContent = `${astro.earth.altDeg.toFixed(2)}°`;
-  $('earthAz').textContent = `${astro.earth.azDeg.toFixed(1)}°`;
-  $('earthDiam').textContent = `${astro.earth.angDiamDeg.toFixed(3)}°`;
-  $('earthIllum').textContent = `${(astro.earth.illum * 100).toFixed(1)}%`;
-  $('earthDist').textContent = `${Math.round(astro.distanceKm).toLocaleString()} km`;
-  $('sunDiam').textContent = `${astro.sun.angDiamDeg.toFixed(3)}°`;
-  $('horizon').textContent = `${astro.horizonKm.toFixed(2)} km`;
-  $('libration').textContent = `${astro.libration.lat.toFixed(2)}° / ${astro.libration.lon.toFixed(2)}°`;
 
   // 开场卡片上的同一组数值（两处显示，便于核对）
   $('fSunAlt').textContent = `${astro.sun.altDeg.toFixed(2)}°`;
@@ -436,7 +442,7 @@ function fillStaticHud() {
 
 applyLook();
 fillStaticHud();
-faceEarthHorizon();
+faceIntro();
 animate();
 
 addEventListener('resize', () => {
@@ -449,5 +455,5 @@ $('enterBtn')?.addEventListener('click', () => {
   $('intro').classList.add('gone');
   setTimeout(() => $('intro').remove(), 600);
   if (!isTouch) canvas.requestPointerLock();
-  faceEarthHorizon();
+  faceIntro();
 });
