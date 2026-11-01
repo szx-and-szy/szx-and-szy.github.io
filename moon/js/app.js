@@ -329,30 +329,6 @@ if (isTouch) {
 /* ---------------- 主循环 ---------------- */
 
 const clock = new THREE.Clock();
-let hudTimer = 0;
-let frames = 0;
-let fpsTime = 0;
-let fps = 0;
-
-function updateHud(dt) {
-  hudTimer += dt;
-  if (hudTimer < 0.2) return;
-  hudTimer = 0;
-
-  const x = camera.position.x;
-  const z = camera.position.z;
-  const R = 1737400;
-  const lat = SITE.lat + THREE.MathUtils.radToDeg(z / R);
-  const lon = SITE.lon + THREE.MathUtils.radToDeg(x / (R * Math.cos(THREE.MathUtils.degToRad(SITE.lat))));
-
-  const heading = ((-state.yaw * 180 / Math.PI) % 360 + 360) % 360;
-  const pitchDeg = state.pitch * 180 / Math.PI;
-
-  $('hudPos').textContent = `${lat.toFixed(4)}°N  ${lon.toFixed(4)}°E`;
-  $('hudLook').textContent = `方位 ${heading.toFixed(0)}°  俯仰 ${pitchDeg.toFixed(0)}°`;
-  $('hudFps').textContent = `${fps.toFixed(0)} fps`;
-  $('hudAltVal').textContent = `${(camera.position.y - EYE_HEIGHT).toFixed(2)} m`;
-}
 
 function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -414,11 +390,6 @@ function animate() {
   sunLight.target.position.copy(camera.position);
 
   renderer.render(scene, camera);
-
-  frames++;
-  fpsTime += dt;
-  if (fpsTime > 0.5) { fps = frames / fpsTime; frames = 0; fpsTime = 0; }
-  updateHud(dt);
 
   requestAnimationFrame(animate);
 }
