@@ -46,12 +46,18 @@ const renderer = new THREE.WebGLRenderer({
   logarithmicDepthBuffer: true,
   powerPreference: 'high-performance',
 });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// 超采样：比 FXAA 更能压锯齿和贴图闪烁，代价是像素量线性上升
+const SS = (() => {
+  const q = parseFloat(new URLSearchParams(location.search).get('ss') || '');
+  if (q > 0) return q;
+  return matchMedia('(pointer: coarse)').matches ? 1.0 : 1.4;
+})();
+renderer.setPixelRatio(Math.min(devicePixelRatio * SS, 2.6));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.84;  // 对齐阿波罗照片的曝光：月壤应落在中灰
+renderer.toneMappingExposure = 0.56;  // Hapke 比 Lambert 亮 2–4 倍，曝光重定标
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
@@ -88,12 +94,12 @@ scene.add(sunLight.target);
 
 // 地球反照光：满地球时月面背光侧照度约 0.02–0.05 lux 量级，
 // 加一层极弱冷色环境光，让背对太阳的地面保留轮廓而不是纯黑（阿波罗宇航员目视亦如此）
-const earthShine = new THREE.HemisphereLight(0x2f3b57, 0x17140f, 0.26);
+const earthShine = new THREE.HemisphereLight(0x2f3b57, 0x17140f, 0.16);
 scene.add(earthShine);
 
 /* ---------------- 地形 ---------------- */
 
-const terrain = createTerrain({ quality });
+const terrain = createTerrain({ quality, sunDir });
 scene.add(terrain.group);
 
 /* ---------------- 天体 ---------------- */
