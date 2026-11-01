@@ -72,7 +72,6 @@
   #hudTop { top: 16px; left: 16px; max-width: 300px; }
   #hudTop .title { color: #f2f3f4; font-size: 12.5px; letter-spacing: .05em; margin-bottom: 4px; }
   #hudTop .meta { color: #8b8f93; font-size: 11px; }
-  #hudAstro { top: 16px; right: 16px; min-width: 232px; }
   #hudGround { bottom: 16px; left: 16px; min-width: 232px; }
   #hudHelp { bottom: 16px; right: 16px; text-align: right; color: #7b7f83; }
   .sep { height: 1px; background: var(--line); margin: 7px -13px; }
@@ -113,7 +112,6 @@
   body.touch #joystick, body.touch #jumpBtn { display: block; }
 
   @media (max-width: 720px) {
-    #hudAstro { top: auto; bottom: 16px; right: 16px; left: 16px; min-width: 0; }
     #hudGround { display: none; }
     #hudHelp { display: none; }
     #hudTop { max-width: 60vw; }
@@ -126,28 +124,13 @@
 <canvas id="view"></canvas>
 
 <div id="crosshair"></div>
-<div id="hint">点击画面锁定鼠标 · WASD 移动 · 空格 跳 · E 看向地球</div>
+<div id="hint">点击画面锁定鼠标 · WASD 移动 · 空格 跳 · E 看地球 · Q 看太阳</div>
 
 <div id="hud">
   <div class="panel" id="hudTop">
     <div class="title"><span id="siteName"></span></div>
     <div class="meta" id="siteCoord"></div>
     <div class="meta" id="siteTime"></div>
-  </div>
-
-  <div class="panel" id="hudAstro">
-    <div class="row"><span>太阳高度</span><span id="sunAlt"></span></div>
-    <div class="row"><span>太阳方位</span><span id="sunAz"></span></div>
-    <div class="row"><span>太阳视直径</span><span id="sunDiam"></span></div>
-    <div class="sep"></div>
-    <div class="row"><span>地球高度</span><span id="earthAlt"></span></div>
-    <div class="row"><span>地球方位</span><span id="earthAz"></span></div>
-    <div class="row"><span>地球视直径</span><span id="earthDiam"></span></div>
-    <div class="row"><span>地球照亮</span><span id="earthIllum"></span></div>
-    <div class="row"><span>月地距离</span><span id="earthDist"></span></div>
-    <div class="sep"></div>
-    <div class="row"><span>天平动</span><span id="libration"></span></div>
-    <div class="row"><span>地平线距离</span><span id="horizon"></span></div>
   </div>
 
   <div class="panel" id="hudGround">
@@ -163,7 +146,7 @@
   <div class="panel" id="hudHelp">
     WASD 行走 · Shift 快走<br>
     空格 跳（跳高约 1.1 m）<br>
-    E 看向地球 · Esc 释放鼠标
+    E 看地球 · Q 看太阳 · Esc 释放鼠标
   </div>
 </div>
 
@@ -173,7 +156,7 @@
 <div id="intro">
   <div class="intro-inner">
     <p class="kicker">Apollo 17 · Taurus-Littrow · 1972-12-11</p>
-    <h1>站在月球上，抬头是<br>一颗几乎不动的蓝色地球。</h1>
+    <h1>站在月球上，太阳低悬，<br>地球几乎不动。</h1>
     <p class="sub">
       这不是渲染出来的想象图。太阳和地球在天空中的位置、地球的视直径与相位，
       都按 1972 年 12 月 11 日 19:54:57 UTC、阿波罗 17 号着陆点的真实天文几何计算。
