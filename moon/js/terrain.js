@@ -175,7 +175,10 @@ function massifH(x, z) {
     const v = (-dx * s + dz * c) / m.sz;
     const g = Math.exp(-(u * u + v * v));
     if (g < 0.004) continue;
-    const rough = 1 + 0.35 * fbm(x / 900, z / 900, 3, m.seed);
+    // 两层扰动：900 m 定山形，260 m 给沟壑与破碎感（原来只有一层，山体像光滑沙丘）
+    // 两层扰动：900 m 定山形，260 m 给沟壑与破碎感（原来只有一层，山体像光滑沙丘）
+    const rough = 1 + 0.35 * fbm(x / 900, z / 900, 3, m.seed)
+                  + 0.13 * fbm(x / 260, z / 260, 3, m.seed + 7);
     h += m.amp * g * rough;
   }
   // 谷底向西北开口通马雷，压低远处
@@ -202,7 +205,7 @@ export function heightAt(x, z) {
 /* ---------------- 贴图 ---------------- */
 
 function makeTextures() {
-  const size = 512;
+  const size = 1024;
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const ctx = c.getContext('2d');
@@ -212,9 +215,9 @@ function makeTextures() {
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       // 平铺友好的噪声：用周期化坐标
-      const n = fbm(x / 32, y / 32, 4, 91) * 0.6 + valueNoise(x / 4, y / 4, 133) * 0.4;
+      const n = fbm(x / 64, y / 64, 4, 91) * 0.62 + valueNoise(x / 9, y / 9, 133) * 0.38;
       height[y * size + x] = n;
-      const v = 118 + n * 46;             // 月壤灰度 ~0.12 反照率，视觉上压在中灰
+      const v = 104 + n * 44;              // 压暗：拍照出来亮是曝光，反照率本身只有 0.12 左右
       const i = (y * size + x) * 4;
       img.data[i] = v * 1.02;
       img.data[i + 1] = v;
@@ -227,13 +230,14 @@ function makeTextures() {
   const albedo = new THREE.CanvasTexture(c);
   albedo.colorSpace = THREE.SRGBColorSpace;
   albedo.wrapS = albedo.wrapT = THREE.RepeatWrapping;
+  albedo.anisotropy = 8;
 
   // 法线贴图：由高度场差分得到
   const nc = document.createElement('canvas');
   nc.width = nc.height = size;
   const nctx = nc.getContext('2d');
   const nimg = nctx.createImageData(size, size);
-  const strength = 2.2;
+  const strength = 1.05;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const l = height[y * size + ((x + size - 1) % size)];
@@ -254,6 +258,7 @@ function makeTextures() {
   nctx.putImageData(nimg, 0, 0);
   const normal = new THREE.CanvasTexture(nc);
   normal.wrapS = normal.wrapT = THREE.RepeatWrapping;
+  normal.anisotropy = 8;
 
   return { albedo, normal };
 }
@@ -265,7 +270,7 @@ function vertexColorFor(h, x, z, out) {
   const t = Math.min(1, Math.max(0, (h + 60) / 900));
   // 大尺度反照率起伏：月面从来不是均匀一片灰
   const patch = 0.95 + 0.12 * fbm(x / 130, z / 130, 3, 71) + 0.05 * fbm(x / 26, z / 26, 2, 83);
-  const v = (0.62 + 0.26 * t) * patch;
+  const v = (0.52 + 0.22 * t) * patch;
   out[0] = v * 1.02;
   out[1] = v;
   out[2] = v * 0.96;
@@ -366,18 +371,90 @@ export function createTerrain({ quality = 'high' } = {}) {
   const material = new THREE.MeshStandardMaterial({
     map: tex.albedo,
     normalMap: tex.normal,
-    normalScale: new THREE.Vector2(0.2, 0.2),
+    normalScale: new THREE.Vector2(0.09, 0.09),
     vertexColors: true,
     roughness: 0.97,
     metalness: 0.0,
   });
+
+  /**
+   * 程序化月壤细节：用**世界坐标**的 3D 值噪声调制反照率与法线。
+   * 贴图再怎么铺都会有周期，11 m 一重复在斜视下仍可能看出网格；
+   * 世界坐标噪声天然无重复，两层（0.55 / 3.1 周期）分别补大斑块与细颗粒。
+   * 注入 MeshStandardMaterial 的 shader，不重写整套 BRDF。
+   */
+  const detailOn = !/detail=0/.test(location.search);
+  material.onBeforeCompile = (shader) => {
+    if (!detailOn) return;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
+      .replace('#include <begin_vertex>',
+               '#include <begin_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying vec3 vWPos;
+
+float hash31(vec3 p) {
+  p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+float vnoise3(vec3 x) {
+  vec3 i = floor(x);
+  vec3 f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(hash31(i + vec3(0,0,0)), hash31(i + vec3(1,0,0)), f.x),
+        mix(hash31(i + vec3(0,1,0)), hash31(i + vec3(1,1,0)), f.x), f.y),
+    mix(mix(hash31(i + vec3(0,0,1)), hash31(i + vec3(1,0,1)), f.x),
+        mix(hash31(i + vec3(0,1,1)), hash31(i + vec3(1,1,1)), f.x), f.y),
+    f.z);
+}
+
+float lunarDetail(vec3 p) {
+  // 两个 octave 足够：每多一层就多 8 次 hash，而这是逐像素成本
+  return vnoise3(p) * 0.5 + vnoise3(p * 2.07) * 0.25;
+}
+`)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+  {
+    float dist = length(vWPos - cameraPosition);
+    // 远处既不计算也不混合：程序化噪声没有 mipmap，十几米外就是走样白点，
+    // 而且逐像素 hash 是实打实的成本，能跳过就跳过
+    if (dist < 120.0) {
+      float fade = 1.0 - smoothstep(28.0, 120.0, dist);
+      float d1 = lunarDetail(vWPos * 0.9);
+      float d2 = lunarDetail(vWPos * 5.2);
+      diffuseColor.rgb *= mix(1.0, 0.90 + 0.15 * d1 + 0.07 * d2, fade);
+    }
+  }
+`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+  {
+    // 细节法线：对世界坐标噪声求梯度，投影到视图空间叠加
+    float dist = length(vWPos - cameraPosition);
+    float fade = 1.0 - smoothstep(8.0, 42.0, dist);
+    // 高频、低幅：月壤是细粉，近景不该有波浪状起伏
+    float e = 0.02;
+    float h0 = lunarDetail(vWPos * 11.0);
+    float hx = lunarDetail((vWPos + vec3(e, 0.0, 0.0)) * 11.0);
+    float hz = lunarDetail((vWPos + vec3(0.0, 0.0, e)) * 11.0);
+    vec2 grad = vec2(hx - h0, hz - h0) * 0.55 * fade;
+    normal = normalize(normal + (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz);
+  }
+`);
+  };
+  material.customProgramCacheKey = () => (detailOn ? 'lunar-regolith-detail' : 'plain');
+
 
   const hi = quality === 'high';
   const groundSeg = hi ? 192 : 96;
   const midAng = hi ? 200 : 120;
   const farAng = hi ? 160 : 96;
 
-  const ground = new THREE.Mesh(buildSquare(240, groundSeg, 0, 0, 1 / 4.0), material);
+  const ground = new THREE.Mesh(buildSquare(240, groundSeg, 0, 0, 1 / 11.0), material);
   const mid = new THREE.Mesh(buildDisc(110, 2400, 44, midAng, 0, 0, 1 / 40, -0.35), material);
   const far = new THREE.Mesh(buildDisc(2300, 20000, 26, farAng, 0, 0, 1 / 300, -1.0), material);
 
@@ -389,29 +466,36 @@ export function createTerrain({ quality = 'high' } = {}) {
   group.add(ground, mid, far);
 
   /* 石块：用实例化网格，只铺在近场 */
-  const rockGeo = new THREE.IcosahedronGeometry(0.5, 2);
+  // SphereGeometry 是索引几何，computeVertexNormals 给的是平滑法线；
+  // 之前用 Icosahedron 属于非索引几何，每个面独立法线，近距离就是一堆三角面片
+  const rockGeo = new THREE.SphereGeometry(0.5, 18, 13);
   {
     const p = rockGeo.attributes.position;
     for (let i = 0; i < p.count; i++) {
-      const s = 0.7 + 0.6 * hash2(i, 0, 977);
-      p.setXYZ(i, p.getX(i) * s, p.getY(i) * s * 0.72, p.getZ(i) * s);
+      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      const n = 1 + 0.26 * Math.sin(x * 7.1 + z * 3.3)
+                  + 0.17 * Math.cos(y * 5.7 + x * 2.1)
+                  + 0.11 * Math.sin(z * 9.4 + y * 4.2);
+      p.setXYZ(i, x * n, y * n * 0.72, z * n);
     }
     rockGeo.computeVertexNormals();
   }
   const rockMat = new THREE.MeshStandardMaterial({
-    color: 0x55534f, roughness: 0.97, metalness: 0.0,
+    color: 0x8b8579, roughness: 0.93, metalness: 0.0,
   });
-  const rockCount = hi ? 460 : 200;
+  const rockCount = hi ? 260 : 120;
   const rocks = new THREE.InstancedMesh(rockGeo, rockMat, rockCount);
   rocks.castShadow = true;
-  rocks.receiveShadow = true;
+  // 不接收阴影：2048 阴影图覆盖 180 m（约 8.8 cm/texel），
+  // 0.2–1.4 m 的岩石只有几个 texel，自阴影精度不足会把整块压成全黑
+  rocks.receiveShadow = false;
   rocks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   group.add(rocks);
 
   // 细砾石：近场 30 m 内的高密度小石子，替代贴图重复感
   const gravelGeo = new THREE.IcosahedronGeometry(0.5, 0);
   const gravelMat = new THREE.MeshStandardMaterial({
-    color: 0x4b4944, roughness: 1.0, metalness: 0.0,
+    color: 0x6f6a61, roughness: 1.0, metalness: 0.0,
   });
   const gravelCount = hi ? 900 : 350;
   const gravel = new THREE.InstancedMesh(gravelGeo, gravelMat, gravelCount);
@@ -427,7 +511,7 @@ export function createTerrain({ quality = 'high' } = {}) {
       const d = Math.sqrt(hash2(i, 2, 4211)) * 120;
       const x = cx + Math.cos(a) * d;
       const z = cz + Math.sin(a) * d;
-      const s = 0.12 + 1.0 * Math.pow(hash2(i, 3, 4211), 3);
+      const s = 0.10 + 0.58 * Math.pow(hash2(i, 3, 4211), 3);
       dummy.position.set(x, heightAt(x, z) + s * 0.35, z);
       dummy.rotation.set(hash2(i, 4, 771) * 3.14, hash2(i, 5, 771) * 6.28, hash2(i, 6, 771) * 3.14);
       dummy.scale.set(s * 1.3, s * 0.8, s * 1.1);
@@ -454,7 +538,7 @@ export function createTerrain({ quality = 'high' } = {}) {
   const state = { cx: 0, cz: 0 };
 
   function recenterGround(cx, cz) {
-    const g = buildSquare(240, groundSeg, cx, cz, 1 / 4.0);
+    const g = buildSquare(240, groundSeg, cx, cz, 1 / 11.0);
     ground.geometry.dispose();
     ground.geometry = g;
     placeRocks(cx, cz);
