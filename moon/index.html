@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>站在月球上 · 陶拉斯-利特罗谷</title>
+<meta name="description" content="阿波罗 17 号着陆点，第一人称月面视角。太阳高度 13.85°、地球高度 48.5°、视直径 1.873°，均为 1972-12-11 19:54:57 UTC 的真实几何。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23111'/%3E%3Ccircle cx='16' cy='13' r='5' fill='%234a7bd5'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --ink: #e8e8e4;
+    --dim: #9a9c98;
+    --line: rgba(255,255,255,.14);
+    --panel: rgba(12,12,12,.55);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #000;
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #view { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+  /* ---------- 开场 ---------- */
+  #intro {
+    position: fixed; inset: 0; z-index: 30;
+    display: grid; place-items: center;
+    background: radial-gradient(circle at 50% 42%, #14161a 0%, #050506 62%, #000 100%);
+    transition: opacity .55s ease;
+  }
+  #intro.gone { opacity: 0; pointer-events: none; }
+  .intro-inner { width: min(560px, 88vw); }
+  .kicker {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .18em;
+    text-transform: uppercase; color: #7f8489; margin: 0 0 18px;
+  }
+  h1 {
+    font-size: clamp(24px, 4.2vw, 33px); line-height: 1.34; font-weight: 620;
+    letter-spacing: -.01em; margin: 0 0 14px;
+  }
+  .sub { color: #a4a8ac; font-size: 14.5px; line-height: 1.85; margin: 0 0 26px; }
+  .facts {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 22px; margin: 0 0 30px; font-size: 13px;
+  }
+  .facts div { display: flex; justify-content: space-between; gap: 12px; padding-bottom: 7px; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .facts span:first-child { color: #86898d; }
+  .facts span:last-child { font-family: var(--mono); color: #dfe1e3; }
+  #enterBtn {
+    appearance: none; border: 1px solid rgba(255,255,255,.28); background: rgba(255,255,255,.06);
+    color: #f2f3f4; padding: 12px 26px; border-radius: 999px; font-size: 14px;
+    letter-spacing: .04em; cursor: pointer; transition: background .2s, border-color .2s;
+  }
+  #enterBtn:hover { background: rgba(255,255,255,.13); border-color: rgba(255,255,255,.5); }
+  .tip { margin: 16px 0 0; font-size: 12px; color: #6f7377; font-family: var(--mono); letter-spacing: .04em; }
+
+  /* ---------- HUD ---------- */
+  #hud {
+    position: fixed; inset: 0; z-index: 10; pointer-events: none;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .02em;
+  }
+  .panel {
+    position: absolute; padding: 11px 13px; border: 1px solid var(--line);
+    background: var(--panel); backdrop-filter: blur(9px); border-radius: 8px;
+    line-height: 1.85; color: var(--dim);
+  }
+  .panel b { color: #f0f1f2; font-weight: 500; }
+  .panel .row { display: flex; gap: 14px; justify-content: space-between; }
+  .panel .row span:last-child { color: #e6e7e8; }
+  #hudTop { top: 16px; left: 16px; max-width: 300px; }
+  #hudTop .title { color: #f2f3f4; font-size: 12.5px; letter-spacing: .05em; margin-bottom: 4px; }
+  #hudTop .meta { color: #8b8f93; font-size: 11px; }
+  #hudAstro { top: 16px; right: 16px; min-width: 232px; }
+  #hudGround { bottom: 16px; left: 16px; min-width: 232px; }
+  #hudHelp { bottom: 16px; right: 16px; text-align: right; color: #7b7f83; }
+  .sep { height: 1px; background: var(--line); margin: 7px -13px; }
+
+  #crosshair {
+    position: fixed; left: 50%; top: 50%; width: 5px; height: 5px; z-index: 11;
+    margin: -2.5px 0 0 -2.5px; border-radius: 50%;
+    background: rgba(255,255,255,.55); box-shadow: 0 0 0 1px rgba(0,0,0,.5);
+    pointer-events: none;
+  }
+  #hint {
+    position: fixed; left: 50%; bottom: 78px; transform: translateX(-50%);
+    z-index: 12; font-family: var(--mono); font-size: 12px; color: #cfd2d4;
+    background: rgba(0,0,0,.5); padding: 8px 16px; border-radius: 999px;
+    border: 1px solid var(--line); transition: opacity .3s; pointer-events: none;
+  }
+  #hint.hidden { opacity: 0; }
+
+  /* ---------- 触屏 ---------- */
+  #joystick {
+    position: fixed; z-index: 20; width: 104px; height: 104px; margin: -52px 0 0 -52px;
+    border: 1px solid rgba(255,255,255,.2); border-radius: 50%;
+    background: rgba(255,255,255,.04); opacity: 0; transition: opacity .2s;
+    pointer-events: none; display: none;
+  }
+  #joystick.on { opacity: 1; }
+  #knob {
+    position: absolute; left: 50%; top: 50%; width: 42px; height: 42px; margin: -21px 0 0 -21px;
+    border-radius: 50%; background: rgba(255,255,255,.28);
+  }
+  #jumpBtn {
+    position: fixed; right: 22px; bottom: 96px; z-index: 20;
+    width: 74px; height: 74px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.28); background: rgba(255,255,255,.08);
+    color: #e9eaeb; font-family: var(--mono); font-size: 12px; letter-spacing: .05em;
+    display: none;
+  }
+  body.touch #joystick, body.touch #jumpBtn { display: block; }
+
+  @media (max-width: 720px) {
+    #hudAstro { top: auto; bottom: 16px; right: 16px; left: 16px; min-width: 0; }
+    #hudGround { display: none; }
+    #hudHelp { display: none; }
+    #hudTop { max-width: 60vw; }
+    .facts { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="view"></canvas>
+
+<div id="crosshair"></div>
+<div id="hint">点击画面锁定鼠标 · WASD 移动 · 空格 跳 · E 看向地球</div>
+
+<div id="hud">
+  <div class="panel" id="hudTop">
+    <div class="title"><span id="siteName"></span></div>
+    <div class="meta" id="siteCoord"></div>
+    <div class="meta" id="siteTime"></div>
+  </div>
+
+  <div class="panel" id="hudAstro">
+    <div class="row"><span>太阳高度</span><span id="sunAlt"></span></div>
+    <div class="row"><span>太阳方位</span><span id="sunAz"></span></div>
+    <div class="row"><span>太阳视直径</span><span id="sunDiam"></span></div>
+    <div class="sep"></div>
+    <div class="row"><span>地球高度</span><span id="earthAlt"></span></div>
+    <div class="row"><span>地球方位</span><span id="earthAz"></span></div>
+    <div class="row"><span>地球视直径</span><span id="earthDiam"></span></div>
+    <div class="row"><span>地球照亮</span><span id="earthIllum"></span></div>
+    <div class="row"><span>月地距离</span><span id="earthDist"></span></div>
+    <div class="sep"></div>
+    <div class="row"><span>天平动</span><span id="libration"></span></div>
+    <div class="row"><span>地平线距离</span><span id="horizon"></span></div>
+  </div>
+
+  <div class="panel" id="hudGround">
+    <div class="row"><span>坐标</span><span id="hudPos"></span></div>
+    <div class="row"><span>视线</span><span id="hudLook"></span></div>
+    <div class="row"><span>海拔</span><span id="hudAltVal"></span></div>
+    <div class="sep"></div>
+    <div class="row"><span>重力</span><span>1.62 m/s²</span></div>
+    <div class="row"><span>眼高</span><span>1.70 m</span></div>
+    <div class="row"><span>渲染</span><span id="hudFps"></span></div>
+  </div>
+
+  <div class="panel" id="hudHelp">
+    WASD 行走 · Shift 快走<br>
+    空格 跳（跳高约 1.1 m）<br>
+    E 看向地球 · Esc 释放鼠标
+  </div>
+</div>
+
+<div id="joystick"><div id="knob"></div></div>
+<button id="jumpBtn">跳</button>
+
+<div id="intro">
+  <div class="intro-inner">
+    <p class="kicker">Apollo 17 · Taurus-Littrow · 1972-12-11</p>
+    <h1>站在月球上，抬头是<br>一颗几乎不动的蓝色地球。</h1>
+    <p class="sub">
+      这不是渲染出来的想象图。太阳和地球在天空中的位置、地球的视直径与相位，
+      都按 1972 年 12 月 11 日 19:54:57 UTC、阿波罗 17 号着陆点的真实天文几何计算。
+      天空是黑的，因为这里没有空气；阴影是硬的，因为没有散射。
+    </p>
+    <div class="facts">
+      <div><span>太阳高度</span><span id="fSunAlt">—</span></div>
+      <div><span>地球高度</span><span id="fEarthAlt">—</span></div>
+      <div><span>地球视直径</span><span id="fEarthDiam">—</span></div>
+      <div><span>地球照亮</span><span id="fEarthIllum">—</span></div>
+      <div><span>月地距离</span><span id="fEarthDist">—</span></div>
+      <div><span>地平线距离</span><span id="fHorizon">—</span></div>
+    </div>
+    <button id="enterBtn">进入月面</button>
+    <p class="tip">建议戴上耳机？不必——这里没有声音。</p>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js"
+  }
+}
+</script>
+<script type="module" src="./js/app.js"></script>
+<script>
+  // 触屏设备打标，供 CSS 显示摇杆
+  if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');
+</script>
+</body>
+</html>
