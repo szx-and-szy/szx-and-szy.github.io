@@ -161,7 +161,7 @@ function cratersAt(x, z) {
 const MASSIFS = [
   { x: 4200, z: -5600, sx: 2700, sz: 2100, amp: 2300, rot: -0.55, seed: 101 },
   { x: -500, z: 4400, sx: 2200, sz: 1700, amp: 2200, rot: 0.25, seed: 211 },
-  { x: 5100, z: 700, sx: 1900, sz: 2600, amp: 1500, rot: 0.9, seed: 307 },
+  { x: 10200, z: 1600, sx: 3400, sz: 4200, amp: 1420, rot: 0.9, seed: 307 }, // 东侧 East Massif：推远抬高比，使山脊仰角低于太阳高度
   { x: 3600, z: 4300, sx: 2500, sz: 2000, amp: 950, rot: -0.3, seed: 401 },
   { x: -6800, z: 2600, sx: 3000, sz: 2400, amp: 700, rot: 0.1, seed: 503 }, // 西侧远山
 ];
