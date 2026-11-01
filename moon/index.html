@@ -72,7 +72,6 @@
   #hudTop { top: 16px; left: 16px; max-width: 300px; }
   #hudTop .title { color: #f2f3f4; font-size: 12.5px; letter-spacing: .05em; margin-bottom: 4px; }
   #hudTop .meta { color: #8b8f93; font-size: 11px; }
-  #hudGround { bottom: 16px; left: 16px; min-width: 232px; }
   #hudHelp { bottom: 16px; right: 16px; text-align: right; color: #7b7f83; }
   .sep { height: 1px; background: var(--line); margin: 7px -13px; }
 
@@ -117,7 +116,6 @@
   body.touch #joystick, body.touch #jumpBtn { display: block; }
 
   @media (max-width: 720px) {
-    #hudGround { display: none; }
     #hudHelp { display: none; }
     #hudTop { max-width: 60vw; }
     .facts { grid-template-columns: 1fr; }
@@ -136,16 +134,6 @@
     <div class="title"><span id="siteName"></span></div>
     <div class="meta" id="siteCoord"></div>
     <div class="meta" id="siteTime"></div>
-  </div>
-
-  <div class="panel" id="hudGround">
-    <div class="row"><span>坐标</span><span id="hudPos"></span></div>
-    <div class="row"><span>视线</span><span id="hudLook"></span></div>
-    <div class="row"><span>海拔</span><span id="hudAltVal"></span></div>
-    <div class="sep"></div>
-    <div class="row"><span>重力</span><span>1.62 m/s²</span></div>
-    <div class="row"><span>眼高</span><span>1.70 m</span></div>
-    <div class="row"><span>渲染</span><span id="hudFps"></span></div>
   </div>
 
   <div class="panel" id="hudHelp">
