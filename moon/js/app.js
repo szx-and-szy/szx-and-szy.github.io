@@ -209,7 +209,6 @@ canvas.addEventListener('click', () => {
 
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
-  $('hint').classList.toggle('hidden', locked);
 });
 
 document.addEventListener('mousemove', (e) => {
