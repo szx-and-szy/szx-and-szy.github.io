@@ -72,7 +72,6 @@
   #hudTop { top: 16px; left: 16px; max-width: 300px; }
   #hudTop .title { color: #f2f3f4; font-size: 12.5px; letter-spacing: .05em; margin-bottom: 4px; }
   #hudTop .meta { color: #8b8f93; font-size: 11px; }
-  #hudHelp { bottom: 16px; right: 16px; text-align: right; color: #7b7f83; }
   .sep { height: 1px; background: var(--line); margin: 7px -13px; }
 
   /* 十字准星：中心留空，避免在纯黑天空里被误认成一颗星 */
@@ -116,7 +115,6 @@
   body.touch #joystick, body.touch #jumpBtn { display: block; }
 
   @media (max-width: 720px) {
-    #hudHelp { display: none; }
     #hudTop { max-width: 60vw; }
     .facts { grid-template-columns: 1fr; }
   }
@@ -136,11 +134,6 @@
     <div class="meta" id="siteTime"></div>
   </div>
 
-  <div class="panel" id="hudHelp">
-    WASD 行走 · Shift 快走<br>
-    空格 跳（跳高约 1.1 m）<br>
-    E 看地球 · Q 看太阳 · Esc 释放鼠标
-  </div>
 </div>
 
 <div id="joystick"><div id="knob"></div></div>
@@ -164,7 +157,7 @@
       <div><span>地平线距离</span><span id="fHorizon">—</span></div>
     </div>
     <button id="enterBtn">进入月面</button>
-    <p class="tip">建议戴上耳机？不必——这里没有声音。</p>
+    <p class="tip">WASD 移动 · 空格 跳 · E 看地球 · Q 看太阳 · Esc 释放鼠标</p>
   </div>
 </div>
 
