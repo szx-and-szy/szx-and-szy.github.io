@@ -88,7 +88,7 @@ const NAMED_CRATERS = [
 function craterProfile(dx, dz, r0) {
   const r = Math.hypot(dx, dz) / r0;
   if (r > 2.4) return 0;
-  const depth = r0 * 0.22;          // 深径比约 0.19（月面新鲜小坑偏深）
+  const depth = r0 * 0.19;          // 深径比约 0.19（月面新鲜小坑偏深）
   const rimH = r0 * 0.055;
 
   let h = 0;
@@ -98,7 +98,7 @@ function craterProfile(dx, dz, r0) {
   return h;
 }
 
-const MID_CELL = 900; // m，负责 25–180 m 的中尺度环坑，填充中景
+const MID_CELL = 350; // m，负责 10–55 m 的中尺度环坑，填充中景
 const midCache = new Map();
 
 function midCellCraters(cx, cz) {
@@ -107,13 +107,13 @@ function midCellCraters(cx, cz) {
   if (list) return list;
 
   list = [];
-  if (hash2(cx, cz, 311) < 0.62) {
-    const n = hash2(cx, cz, 313) < 0.26 ? 2 : 1;
+  if (hash2(cx, cz, 311) < 0.92) {
+    const n = 2;
     for (let k = 0; k < n; k++) {
       const rx = hash2(cx, cz, 317 + k * 11);
       const rz = hash2(cx, cz, 331 + k * 11);
       const rr = hash2(cx, cz, 347 + k * 11);
-      const radius = 25 + 155 * Math.pow(rr, 2.0);
+      const radius = 10 + 45 * Math.pow(rr, 1.8);
       list.push({
         x: cx * MID_CELL + rx * MID_CELL,
         z: cz * MID_CELL + rz * MID_CELL,
@@ -191,12 +191,18 @@ export function heightAt(x, z) {
   let h = 0;
 
   // 谷底缓起伏：振幅约 ±7 m，对应坡度中位数 2–3°
-  h += 7.5 * fbm(x / 430, z / 430, 4, 11);
+  h += 3.8 * fbm(x / 430, z / 430, 4, 11);
   h += 1.4 * fbm(x / 68, z / 68, 3, 23);
-  h += 0.55 * fbm(x / 11, z / 11, 3, 37);
-  h += 0.18 * fbm(x / 4, z / 4, 2, 61);
+  h += 0.22 * fbm(x / 11, z / 11, 3, 37);
+  h += 0.06 * fbm(x / 4, z / 4, 2, 61);
 
   h += cratersAt(x, z);
+
+  // 微型坑：半径远小于胞宽，只看所在胞
+  for (const c of fineCellCraters(Math.floor(x / FINE_CELL), Math.floor(z / FINE_CELL))) {
+    h += craterProfile(x - c.x, z - c.z, c.r) * 0.75;
+  }
+
   h += massifH(x, z);
 
   return h;
@@ -204,26 +210,137 @@ export function heightAt(x, z) {
 
 /* ---------------- 贴图 ---------------- */
 
+/**
+ * 周期值噪声：格点索引按 period 取模，保证 x ∈ [0, period) 时首尾相接。
+ * 普通 valueNoise 在贴图边缘会断，平铺就出现接缝。
+ */
+function pnoise(x, y, period, seed) {
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const xf = x - xi, yf = y - yi;
+  const u = smooth(xf), v = smooth(yf);
+  const w = (i) => ((i % period) + period) % period;
+  const x0 = w(xi), x1 = w(xi + 1), y0 = w(yi), y1 = w(yi + 1);
+  const a = hash2(x0, y0, seed), b = hash2(x1, y0, seed);
+  const c = hash2(x0, y1, seed), d = hash2(x1, y1, seed);
+  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+}
+
+/** 周期分形噪声，(u,v) ∈ [0,1)，返回约 -1..1 */
+function pfbm(u, v, base, oct, seed) {
+  let sum = 0, amp = 1, norm = 0, per = base;
+  for (let o = 0; o < oct; o++) {
+    sum += (pnoise(u * per, v * per, per, seed + o * 17) * 2 - 1) * amp;
+    norm += amp;
+    amp *= 0.5;
+    per *= 2;
+  }
+  return sum / norm;
+}
+
+/**
+ * Worley 元胞噪声。月壤的表面不是连续起伏的云，而是一颗颗离散的颗粒和土块，
+ * fbm 做不出这种东西。每个胞放一个特征点，取到最近点的距离做圆润凸起，
+ * 半径按胞随机 => 大小不一的颗粒；胞索引取模 => 可无缝平铺。
+ */
+const _W = { f1: 0, id: 0 };
+function worley(x, y, cells, seed) {
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const wc = (i) => ((i % cells) + cells) % cells;
+  let f1 = 9, id = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = xi + dx, cy = yi + dy;
+      const wx = wc(cx), wy = wc(cy);
+      const px = cx + hash2(wx, wy, seed);
+      const py = cy + hash2(wx, wy, seed + 91);
+      const ddx = x - px, ddy = y - py;
+      const d = Math.sqrt(ddx * ddx + ddy * ddy);
+      if (d < f1) { f1 = d; id = hash2(wx, wy, seed + 173); }
+    }
+  }
+  _W.f1 = f1; _W.id = id;
+}
+
+/** 单层颗粒高度：0 = 基质平面，1 = 颗粒顶 */
+function granule(u, v, cells, seed, cover) {
+  worley(u * cells, v * cells, cells, seed);
+  const r = cover * (0.45 + 0.55 * _W.id);
+  if (_W.f1 >= r) return 0;
+  const t = 1 - _W.f1 / r;
+  return t * t * (3 - 2 * t);
+}
+
+
 function makeTextures() {
+  /*
+   * 高度场用**物理单位（毫米）**生成，法线直接由 dh/dx 得出（斜率 = 真实坡度）。
+   * 这样法线强度就不是「调出来好看」的，而是可以对上实测值：
+   *
+   *  Helfenstein & Shepard (1999) 用 Apollo 近距立体相机（ALSCC）反演月壤坡面：
+   *    RMS 坡度 15–29° @ 0.85 mm 尺度，6–24° @ 8.5 mm 尺度
+   *  LRO Diviner 的结论一致：未扰动月壤在毫米–厘米尺度是 "visibly rough, hummocky"，
+   *  有大量 clods / clumps；宇航员脚印把表面压平到毫米级，反向印证了这一点。
+   *
+   * 所以这层不能做成「平滑粉尘」，那是被脚印压过之后的状态。
+   * 粒径分布也不是「细尘 + 稀疏颗粒」：80 wt% < 250 μm，但 20 wt% 粗于 1 mm、
+   * 10 wt% 粗于 2 mm——粗碎屑是连续长尾，不是零星点缀。
+   */
   const size = 1024;
+  const TILE_M = 1.25;
+  const MM_PER_PX = (TILE_M * 1000) / size;   // 1.22 mm/px
+
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const ctx = c.getContext('2d');
   const img = ctx.createImageData(size, size);
 
-  const height = new Float32Array(size * size);
+  const H = new Float32Array(size * size);   // 高度，单位 mm
+  const L = new Float32Array(size * size);   // 反照率 0..1
+
   for (let y = 0; y < size; y++) {
+    const v = y / size;
     for (let x = 0; x < size; x++) {
-      // 平铺友好的噪声：用周期化坐标
-      const n = fbm(x / 64, y / 64, 4, 91) * 0.62 + valueNoise(x / 9, y / 9, 133) * 0.38;
-      height[y * size + x] = n;
-      const v = 104 + n * 44;              // 压暗：拍照出来亮是曝光，反照率本身只有 0.12 左右
-      const i = (y * size + x) * 4;
-      img.data[i] = v * 1.02;
-      img.data[i + 1] = v;
-      img.data[i + 2] = v * 0.97;
-      img.data[i + 3] = 255;
+      const u = x / size;
+      const k = y * size + x;
+
+      // 1) 尘埃基底：亚毫米级起伏
+      let h = 0.26 * pfbm(u, v, 16, 4, 911);
+
+      // 2) 微陨石撞击的「雨点坑」，直径约 6 mm
+      h -= 0.38 * granule(u, v, 210, 1201, 0.55);
+
+      // 3) 碎屑：1–8 mm（占重量约 25%）
+      const frag1 = granule(u, v, 150, 733, 0.46);
+      const frag2 = granule(u, v, 70, 301, 0.44);
+      h += 0.55 * frag1 + 1.15 * frag2;
+
+      // 4) 土块 / 团块：1–5 cm（clods，说明月壤有弱黏聚性）
+      const clod = granule(u, v, 24, 401, 0.40);
+      h += 2.60 * clod;
+
+      // 5) 逐颗粒噪声（真实颗粒是棱角状的，不是光滑曲面）
+      h += 0.20 * (hash2(x, y, 77) - 0.5);
+
+      H[k] = h;
+
+      // 反照率：细尘中灰，碎屑与团块略亮也略暗，整体 ±10%
+      let lum = 0.50
+        + 0.055 * pfbm(u, v, 16, 4, 911)
+        + 0.075 * frag1
+        + 0.095 * frag2
+        + 0.060 * clod
+        + 0.045 * (hash2((x * 0.06) | 0, (y * 0.06) | 0, 5) - 0.5);
+      L[k] = lum;
     }
+  }
+
+  for (let k = 0; k < size * size; k++) {
+    const l = L[k];
+    const i = k * 4;
+    img.data[i] = Math.max(0, Math.min(255, l * 255 * 1.035));
+    img.data[i + 1] = Math.max(0, Math.min(255, l * 255 * 1.0));
+    img.data[i + 2] = Math.max(0, Math.min(255, l * 255 * 0.945));
+    img.data[i + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
 
@@ -232,22 +349,22 @@ function makeTextures() {
   albedo.wrapS = albedo.wrapT = THREE.RepeatWrapping;
   albedo.anisotropy = 8;
 
-  // 法线贴图：由高度场差分得到
   const nc = document.createElement('canvas');
   nc.width = nc.height = size;
   const nctx = nc.getContext('2d');
   const nimg = nctx.createImageData(size, size);
-  const strength = 1.05;
+  const at = (x, y) => H[((y + size) % size) * size + ((x + size) % size)];
+  const inv = 1 / (2 * MM_PER_PX);
+  let sumSq = 0;
+
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const l = height[y * size + ((x + size - 1) % size)];
-      const r = height[y * size + ((x + 1) % size)];
-      const u = height[((y + size - 1) % size) * size + x];
-      const d = height[((y + 1) % size) * size + x];
-      const nx = (l - r) * strength;
-      const ny = (u - d) * strength;
-      const nz = 1;
-      const len = Math.hypot(nx, ny, nz);
+      // 斜率直接用毫米除以毫米，得到的就是物理坡度
+      const gx = (at(x + 1, y) - at(x - 1, y)) * inv;
+      const gy = (at(x, y + 1) - at(x, y - 1)) * inv;
+      sumSq += gx * gx + gy * gy;
+      const nx = -gx, ny = -gy, nz = 1;
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
       const i = (y * size + x) * 4;
       nimg.data[i] = ((nx / len) * 0.5 + 0.5) * 255;
       nimg.data[i + 1] = ((ny / len) * 0.5 + 0.5) * 255;
@@ -256,11 +373,43 @@ function makeTextures() {
     }
   }
   nctx.putImageData(nimg, 0, 0);
+  console.log('[regolith] RMS 坡度', (Math.atan(Math.sqrt(sumSq / (size * size))) * 180 / Math.PI).toFixed(1) + '°');
+
   const normal = new THREE.CanvasTexture(nc);
   normal.wrapS = normal.wrapT = THREE.RepeatWrapping;
   normal.anisotropy = 8;
+  normal.colorSpace = THREE.NoColorSpace;
 
   return { albedo, normal };
+}
+
+/* ---------------- 近场微型坑 ----------------
+ *
+ * 真实月面在 0.3–3 m 这个尺度上密度很高（撞击 gardening 的产物），
+ * 而上一层最小只有 2–20 m 的坑，脚下基本是平的。
+ * 半径远小于胞宽，所以只查所在的那一个胞，不必像大坑那样查 3×3。
+ */
+
+const FINE_CELL = 14; // m
+const fineCache = new Map();
+
+function fineCellCraters(cx, cz) {
+  const key = 'f' + cx + ',' + cz;
+  let list = fineCache.get(key);
+  if (list) return list;
+  list = [];
+  for (let k = 0; k < 2; k++) {
+    const rx = hash2(cx, cz, 601 + k * 13);
+    const rz = hash2(cx, cz, 617 + k * 13);
+    const rr = hash2(cx, cz, 631 + k * 13);
+    list.push({
+      x: cx * FINE_CELL + rx * FINE_CELL,
+      z: cz * FINE_CELL + rz * FINE_CELL,
+      r: 0.30 + 2.10 * Math.pow(rr, 1.5),
+    });
+  }
+  fineCache.set(key, list);
+  return list;
 }
 
 /* ---------------- 网格 ---------------- */
@@ -270,10 +419,22 @@ function vertexColorFor(h, x, z, out) {
   const t = Math.min(1, Math.max(0, (h + 60) / 900));
   // 大尺度反照率起伏：月面从来不是均匀一片灰
   const patch = 0.95 + 0.12 * fbm(x / 130, z / 130, 3, 71) + 0.05 * fbm(x / 26, z / 26, 2, 83);
-  const v = (0.52 + 0.22 * t) * patch;
+  const v = (0.52 + 0.10 * t) * patch;
   out[0] = v * 1.02;
   out[1] = v;
   out[2] = v * 0.96;
+}
+
+
+/** 坡度压暗：法线越偏垂直处越接近裸露基岩，反照率低一档 */
+function applySlopeShade(g) {
+  const n = g.attributes.normal, c = g.attributes.color;
+  for (let i = 0; i < n.count; i++) {
+    const ny = Math.abs(n.getY(i));
+    const k = 1 - 0.52 * Math.pow(1 - ny, 0.75);
+    c.setXYZ(i, c.getX(i) * k, c.getY(i) * k, c.getZ(i) * k * 0.97);
+  }
+  c.needsUpdate = true;
 }
 
 function buildSquare(size, seg, cx, cz, uvScale) {
@@ -314,6 +475,7 @@ function buildSquare(size, seg, cx, cz, uvScale) {
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
+  applySlopeShade(g);
   g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
   return g;
 }
@@ -360,40 +522,62 @@ function buildDisc(r0, r1, nr, na, cx, cz, uvScale, yOffset) {
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
+  applySlopeShade(g);
   g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
   return g;
 }
 
 /* ---------------- 对外接口 ---------------- */
 
-export function createTerrain({ quality = 'high' } = {}) {
+export function createTerrain({ quality = 'high', sunDir = new THREE.Vector3(0, 0.24, -1) } = {}) {
   const tex = makeTextures();
   const material = new THREE.MeshStandardMaterial({
     map: tex.albedo,
     normalMap: tex.normal,
-    normalScale: new THREE.Vector2(0.09, 0.09),
+    normalScale: new THREE.Vector2(1.0, 1.0),
     vertexColors: true,
-    roughness: 0.97,
+    roughness: 0.98,
     metalness: 0.0,
   });
 
-  /**
-   * 程序化月壤细节：用**世界坐标**的 3D 值噪声调制反照率与法线。
-   * 贴图再怎么铺都会有周期，11 m 一重复在斜视下仍可能看出网格；
-   * 世界坐标噪声天然无重复，两层（0.55 / 3.1 周期）分别补大斑块与细颗粒。
-   * 注入 MeshStandardMaterial 的 shader，不重写整套 BRDF。
+  /*
+   * 月壤不是朗伯体。这是这一版最关键的改动。
+   *
+   * 阿波罗照片里月面有个反直觉的特点：斜视远处的地面反而更亮，正对镜头的地面偏暗。
+   * 用 Lambert 永远做不出来——Lambert 只和入射角有关，和你从哪个角度看无关。
+   * 真实的月壤是强后向散射介质，NASA JPL 的月面巡视器仿真、ESA 的月壤材质项目
+   * 都改用 Hapke 模型（1981 形式）：
+   *
+   *   f_r = w/(4π) · 1/(μ0+μ) · { [1+B(g)]·P(g) + H(μ0)H(μ) − 1 }
+   *
+   *   μ0 = cos(入射角)   μ = cos(出射角)   g = 相位角
+   *   H(μ) = (1+2μ)/(1+2γμ),  γ = √(1−w)        Chandrasekhar 函数，管多次散射
+   *   P(g) = (4π/5)[ (sin g + (π−g)cos g)/π + (1−cos g)²/10 ]   单粒子相函数
+   *   B(g) = B0[1 − (tan|g|/2h)(3−e^{−h/tan|g|})(1−e^{−h/tan|g|})]   冲效应（相干后向散射）
+   *
+   * 1/(μ0+μ) 就是 Lommel-Seeliger 项，它让掠射方向变亮，正是照片里地平线一带发白的原因。
+   * 这一步不做，再怎么加贴图细节都像涂了漆的石膏。
    */
-  const detailOn = !/detail=0/.test(location.search);
-  material.onBeforeCompile = (shader) => {
-    if (!detailOn) return;
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
-      .replace('#include <begin_vertex>',
-               '#include <begin_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+  const HAPKE_W = 0.32;   // 月壤单次散射反照率（Hapke 2012 综述取值）
+  const HAPKE_H = 0.06;   // 冲效应角宽参数，月壤典型值
+  const hapkeNorm = (() => {
+    const P0 = (4 * Math.PI / 5);
+    const gam = Math.sqrt(1 - HAPKE_W);
+    const H1 = 3 / (1 + 2 * gam);
+    return Math.PI * (HAPKE_W / (4 * Math.PI)) / 2 * (2 * P0 + H1 * H1 - 1);
+  })();
 
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>
+  const sunU = { value: sunDir.clone().normalize() };
+  const normU = { value: hapkeNorm };
+
+  const detailOn = !/detail=0/.test(location.search);
+
+  const COMMON_GLSL = `#include <common>
 varying vec3 vWPos;
+uniform vec3 uSunDir;
+uniform float uHapkeNorm;
+uniform float uHapkeW;
+uniform float uHapkeH;
 
 float hash31(vec3 p) {
   p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));
@@ -406,57 +590,156 @@ float vnoise3(vec3 x) {
   vec3 f = fract(x);
   f = f * f * (3.0 - 2.0 * f);
   return mix(
-    mix(mix(hash31(i + vec3(0,0,0)), hash31(i + vec3(1,0,0)), f.x),
-        mix(hash31(i + vec3(0,1,0)), hash31(i + vec3(1,1,0)), f.x), f.y),
-    mix(mix(hash31(i + vec3(0,0,1)), hash31(i + vec3(1,0,1)), f.x),
-        mix(hash31(i + vec3(0,1,1)), hash31(i + vec3(1,1,1)), f.x), f.y),
+    mix(mix(hash31(i + vec3(0.0, 0.0, 0.0)), hash31(i + vec3(1.0, 0.0, 0.0)), f.x),
+        mix(hash31(i + vec3(0.0, 1.0, 0.0)), hash31(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+    mix(mix(hash31(i + vec3(0.0, 0.0, 1.0)), hash31(i + vec3(1.0, 0.0, 1.0)), f.x),
+        mix(hash31(i + vec3(0.0, 1.0, 1.0)), hash31(i + vec3(1.0, 1.0, 1.0)), f.x), f.y),
     f.z);
 }
 
-float lunarDetail(vec3 p) {
-  // 两个 octave 足够：每多一层就多 8 次 hash，而这是逐像素成本
-  return vnoise3(p) * 0.5 + vnoise3(p * 2.07) * 0.25;
+// 三层就够，逐像素 hash 是实打实的成本
+float fbm3(vec3 p) {
+  return vnoise3(p) * 0.5 + vnoise3(p * 2.03) * 0.25 + vnoise3(p * 4.07) * 0.125;
 }
-`)
-      .replace('#include <map_fragment>', `#include <map_fragment>
+
+float fbm2(vec3 p) {
+  return vnoise3(p) * 0.66 + vnoise3(p * 2.11) * 0.34;
+}
+
+float hapkeP(float g) {
+  float s = sin(g), c = cos(g);
+  float t = (s + (3.14159265 - g) * c) / 3.14159265;
+  return (4.0 * 3.14159265 / 5.0) * (t + (1.0 - c) * (1.0 - c) / 10.0);
+}
+
+float hapkeB(float g) {
+  if (g > 1.5707963) return 0.0;
+  float tg = tan(g);
+  if (tg < 1e-3) return 1.0;
+  float x = uHapkeH / tg;
+  return 1.0 - (tg / (2.0 * uHapkeH)) * (3.0 - exp(-x)) * (1.0 - exp(-x));
+}
+
+float hapkeHc(float mu) {
+  float gam = sqrt(max(1.0 - uHapkeW, 0.0));
+  return (1.0 + 2.0 * mu) / (1.0 + 2.0 * gam * mu);
+}
+
+float hapkeRefl(float mu0, float mu, float g) {
+  float v = (1.0 + hapkeB(g)) * hapkeP(g) + hapkeHc(mu0) * hapkeHc(mu) - 1.0;
+  return 3.14159265 * (uHapkeW / (4.0 * 3.14159265)) / max(mu0 + mu, 1e-3) * v;
+}
+`;
+
+  const MAP_GLSL = `#include <map_fragment>
   {
     float dist = length(vWPos - cameraPosition);
-    // 远处既不计算也不混合：程序化噪声没有 mipmap，十几米外就是走样白点，
-    // 而且逐像素 hash 是实打实的成本，能跳过就跳过
-    if (dist < 120.0) {
-      float fade = 1.0 - smoothstep(28.0, 120.0, dist);
-      float d1 = lunarDetail(vWPos * 0.9);
-      float d2 = lunarDetail(vWPos * 5.2);
-      diffuseColor.rgb *= mix(1.0, 0.90 + 0.15 * d1 + 0.07 * d2, fade);
+    // 大尺度斑驳：月面从来不是均匀一块灰，这一层同时把 1.25 m 贴图的周期打散
+    float macro = fbm3(vWPos * vec3(0.052, 0.085, 0.052));
+    diffuseColor.rgb *= 0.93 + 0.14 * macro;
+
+    // 800 m 尺度的大块明暗：远山全靠它才有层次，否则是一整片同色
+    float macroFar = vnoise3(vWPos * 0.0013) * 0.6 + vnoise3(vWPos * 0.0034) * 0.4;
+    diffuseColor.rgb *= 0.80 + 0.40 * macroFar;
+
+    if (dist < 80.0) {
+      // 近场细砂：3 cm 与 1.4 cm 两层，只有走到跟前才起作用
+      float f = vnoise3(vWPos * 33.0) * 0.62 + vnoise3(vWPos * 74.0) * 0.38;
+      diffuseColor.rgb *= mix(1.0, 0.965 + 0.06 * f, 1.0 - smoothstep(26.0, 80.0, dist));
     }
   }
-`)
-      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-  {
-    // 细节法线：对世界坐标噪声求梯度，投影到视图空间叠加
-    float dist = length(vWPos - cameraPosition);
-    float fade = 1.0 - smoothstep(8.0, 42.0, dist);
-    // 高频、低幅：月壤是细粉，近景不该有波浪状起伏
-    float e = 0.02;
-    float h0 = lunarDetail(vWPos * 11.0);
-    float hx = lunarDetail((vWPos + vec3(e, 0.0, 0.0)) * 11.0);
-    float hz = lunarDetail((vWPos + vec3(0.0, 0.0, e)) * 11.0);
-    vec2 grad = vec2(hx - h0, hz - h0) * 0.55 * fade;
-    normal = normalize(normal + (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz);
-  }
-`);
-  };
-  material.customProgramCacheKey = () => (detailOn ? 'lunar-regolith-detail' : 'plain');
+`;
 
+  const NORMAL_GLSL = `#include <normal_fragment_maps>
+  {
+    float dist = length(vWPos - cameraPosition);
+
+    // 近景：1–5 cm 的细砂起伏，只在 25 m 内
+    if (dist < 25.0) {
+      float fade = 1.0 - smoothstep(6.0, 25.0, dist);
+      float e = 0.012;
+      float h0 = fbm3(vWPos * 26.0);
+      float hx = fbm3((vWPos + vec3(e, 0.0, 0.0)) * 26.0);
+      float hz = fbm3((vWPos + vec3(0.0, 0.0, e)) * 26.0);
+      vec2 grad = vec2(hx - h0, hz - h0) * 0.35 * fade;
+      normal = normalize(normal + (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz);
+    }
+
+    // 中景：30 m 与 9 m 两个尺度的起伏。
+    // 网格在这里已经是十几米一个四边形，几何上做不出这么细的坡面，
+    // 只能靠法线补——否则整片远地面被 Hapke 的掠射增益推成一个亮度，看着像沙丘。
+    if (dist > 8.0 && dist < 700.0) {
+      float fade = smoothstep(8.0, 34.0, dist) * (1.0 - smoothstep(320.0, 700.0, dist));
+      float e1 = 1.1, e2 = 0.28;
+      float a0 = fbm2(vWPos * 0.034);
+      float ax = fbm2((vWPos + vec3(e1, 0.0, 0.0)) * 0.034);
+      float az = fbm2((vWPos + vec3(0.0, 0.0, e1)) * 0.034);
+      float b0 = fbm2(vWPos * 0.115);
+      float bx = fbm2((vWPos + vec3(e2, 0.0, 0.0)) * 0.115);
+      float bz = fbm2((vWPos + vec3(0.0, 0.0, e2)) * 0.115);
+      vec2 grad = (vec2(ax - a0, az - a0) * 2.6 + vec2(bx - b0, bz - b0) * 1.5) * fade;
+      normal = normalize(normal + (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz);
+    }
+  }
+`;
+
+  const HAPKE_GLSL = `
+  {
+    vec3 Nw = inverseTransformDirection(normal, viewMatrix);
+    vec3 Vw = normalize(cameraPosition - vWPos);
+    float mu0 = max(dot(Nw, uSunDir), 1e-3);
+    float mu  = max(dot(Nw, Vw), 0.16);   // 粗糙度补偿：掠射时有效出射角不为 0
+    float g   = acos(clamp(dot(uSunDir, Vw), -1.0, 1.0));
+    float R   = hapkeRefl(mu0, mu, g);
+    // 与 Lambert 的比值。晨昏线附近 μ0→0 时会爆，但真正的爆点是钳位本身：
+    // 一旦大面积触到上限，法线再怎么变亮度都是同一个常数，地面立刻变成白纸。
+    // 所以上限放得很宽，靠 μ 的下限控制掠射增益，让整个亮度区间都保留响应。
+    float gain = clamp(R / (uHapkeNorm * mu0), 0.0, 14.0);
+
+    // 远距离回退到朗伯：10 km 外的山体一个四边形 500 m，几何上根本载不住粗糙度，
+    // 再按 Hapke 的掠射增益算，亮面就会一路顶到饱和，变成一张白剪纸。
+    float dist2 = length(vWPos - cameraPosition);
+    gain = mix(gain, 1.0, smoothstep(700.0, 4200.0, dist2));
+
+    reflectedLight.directDiffuse *= gain;
+  }
+  vec3 totalDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;`;
+
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uSunDir = sunU;
+    shader.uniforms.uHapkeNorm = normU;
+    shader.uniforms.uHapkeW = { value: HAPKE_W };
+    shader.uniforms.uHapkeH = { value: HAPKE_H };
+
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
+      .replace('#include <begin_vertex>',
+               '#include <begin_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+
+    let f = shader.fragmentShader.replace('#include <common>', COMMON_GLSL);
+    if (detailOn) {
+      f = f.replace('#include <map_fragment>', MAP_GLSL)
+           .replace('#include <normal_fragment_maps>', NORMAL_GLSL);
+    }
+    f = f.replace(
+      'vec3 totalDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;',
+      HAPKE_GLSL);
+    shader.fragmentShader = f;
+  };
+  material.customProgramCacheKey = () => (detailOn ? 'regolith-hapke-detail' : 'regolith-hapke');
 
   const hi = quality === 'high';
-  const groundSeg = hi ? 192 : 96;
-  const midAng = hi ? 200 : 120;
-  const farAng = hi ? 160 : 96;
+  const groundSeg = hi ? 320 : 140;
+  // 中景与远景共用同一圈角度分段与同一接缝半径：
+  // 接缝上两圈顶点逐一对齐，网格才是水密的。之前 mid 到 2400、far 从 2300 起，
+  // 中间 100 m 重叠，粗网格的弦高误差会把远景点从近景里顶出来 => 一片白色薄板。
+  const ringAng = hi ? 256 : 140;
+  const SEAM = 2400;
+  const RING_Y = -0.30;   // 整体压低于方格地面，避免 110–120 m 的环带 z-fighting
 
-  const ground = new THREE.Mesh(buildSquare(240, groundSeg, 0, 0, 1 / 11.0), material);
-  const mid = new THREE.Mesh(buildDisc(110, 2400, 44, midAng, 0, 0, 1 / 40, -0.35), material);
-  const far = new THREE.Mesh(buildDisc(2300, 20000, 26, farAng, 0, 0, 1 / 300, -1.0), material);
+  const ground = new THREE.Mesh(buildSquare(240, groundSeg, 0, 0, 1 / 1.25), material);
+  const mid = new THREE.Mesh(buildDisc(110, SEAM, 62, ringAng, 0, 0, 1 / 6, RING_Y), material);
+  const far = new THREE.Mesh(buildDisc(SEAM, 20000, 42, ringAng, 0, 0, 1 / 6, RING_Y), material);
 
   ground.receiveShadow = true;
   mid.receiveShadow = true;
@@ -476,14 +759,14 @@ float lunarDetail(vec3 p) {
       const n = 1 + 0.26 * Math.sin(x * 7.1 + z * 3.3)
                   + 0.17 * Math.cos(y * 5.7 + x * 2.1)
                   + 0.11 * Math.sin(z * 9.4 + y * 4.2);
-      p.setXYZ(i, x * n, y * n * 0.72, z * n);
+      p.setXYZ(i, x * n, y * n * 0.92, z * n);
     }
     rockGeo.computeVertexNormals();
   }
   const rockMat = new THREE.MeshStandardMaterial({
-    color: 0x8b8579, roughness: 0.93, metalness: 0.0,
+    color: 0xb2ab9b, roughness: 0.88, metalness: 0.0,
   });
-  const rockCount = hi ? 260 : 120;
+  const rockCount = hi ? 520 : 220;
   const rocks = new THREE.InstancedMesh(rockGeo, rockMat, rockCount);
   rocks.castShadow = true;
   // 不接收阴影：2048 阴影图覆盖 180 m（约 8.8 cm/texel），
@@ -497,7 +780,7 @@ float lunarDetail(vec3 p) {
   const gravelMat = new THREE.MeshStandardMaterial({
     color: 0x6f6a61, roughness: 1.0, metalness: 0.0,
   });
-  const gravelCount = hi ? 900 : 350;
+  const gravelCount = hi ? 620 : 260;
   const gravel = new THREE.InstancedMesh(gravelGeo, gravelMat, gravelCount);
   gravel.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   gravel.frustumCulled = false;
@@ -511,10 +794,10 @@ float lunarDetail(vec3 p) {
       const d = Math.sqrt(hash2(i, 2, 4211)) * 120;
       const x = cx + Math.cos(a) * d;
       const z = cz + Math.sin(a) * d;
-      const s = 0.10 + 0.58 * Math.pow(hash2(i, 3, 4211), 3);
+      const s = 0.14 + 0.82 * Math.pow(hash2(i, 3, 4211), 3);
       dummy.position.set(x, heightAt(x, z) + s * 0.35, z);
       dummy.rotation.set(hash2(i, 4, 771) * 3.14, hash2(i, 5, 771) * 6.28, hash2(i, 6, 771) * 3.14);
-      dummy.scale.set(s * 1.3, s * 0.8, s * 1.1);
+      dummy.scale.set(s * 1.15, s * 0.9, s * 1.05);
       dummy.updateMatrix();
       rocks.setMatrixAt(i, dummy.matrix);
     }
@@ -522,10 +805,10 @@ float lunarDetail(vec3 p) {
 
     for (let i = 0; i < gravelCount; i++) {
       const a = hash2(i, 11, 9137) * Math.PI * 2;
-      const d = Math.sqrt(hash2(i, 12, 9137)) * 30;
+      const d = Math.sqrt(hash2(i, 12, 9137)) * 18;
       const x = cx + Math.cos(a) * d;
       const z = cz + Math.sin(a) * d;
-      const s = 0.03 + 0.07 * Math.pow(hash2(i, 13, 9137), 2);
+      const s = 0.05 + 0.13 * Math.pow(hash2(i, 13, 9137), 2);
       dummy.position.set(x, heightAt(x, z) + s * 0.1, z);
       dummy.rotation.set(hash2(i, 14, 913) * 3.14, hash2(i, 15, 913) * 6.28, hash2(i, 16, 913) * 3.14);
       dummy.scale.set(s * 1.3, s * 0.45, s * 1.1);
@@ -538,28 +821,26 @@ float lunarDetail(vec3 p) {
   const state = { cx: 0, cz: 0 };
 
   function recenterGround(cx, cz) {
-    const g = buildSquare(240, groundSeg, cx, cz, 1 / 11.0);
+    const g = buildSquare(240, groundSeg, cx, cz, 1 / 1.25);
     ground.geometry.dispose();
     ground.geometry = g;
     placeRocks(cx, cz);
     state.cx = cx; state.cz = cz;
   }
 
-  function recenterMid(cx, cz) {
-    const g = buildDisc(110, 2400, 44, midAng, cx, cz, 1 / 40, -0.35);
+  /** 中景与远景一起重建：接缝上顶点必须成对，分开重建就会裂开 */
+  function recenterRings(cx, cz) {
+    const gm = buildDisc(110, SEAM, 62, ringAng, cx, cz, 1 / 6, RING_Y);
     mid.geometry.dispose();
-    mid.geometry = g;
-  }
-
-  function recenterFar(cx, cz) {
-    const g = buildDisc(2300, 20000, 26, farAng, cx, cz, 1 / 300, -1.0);
+    mid.geometry = gm;
+    const gf = buildDisc(SEAM, 20000, 42, ringAng, cx, cz, 1 / 6, RING_Y);
     far.geometry.dispose();
-    far.geometry = g;
+    far.geometry = gf;
   }
 
   placeRocks(0, 0);
 
-  let lastGround = { x: 0, z: 0 }, lastMid = { x: 0, z: 0 }, lastFar = { x: 0, z: 0 };
+  let lastGround = { x: 0, z: 0 }, lastRings = { x: 0, z: 0 };
 
   return {
     group,
@@ -571,13 +852,9 @@ float lunarDetail(vec3 p) {
         recenterGround(px, pz);
         lastGround = { x: px, z: pz };
       }
-      if (force || Math.hypot(px - lastMid.x, pz - lastMid.z) > 70) {
-        recenterMid(px, pz);
-        lastMid = { x: px, z: pz };
-      }
-      if (force || Math.hypot(px - lastFar.x, pz - lastFar.z) > 900) {
-        recenterFar(px, pz);
-        lastFar = { x: px, z: pz };
+      if (force || Math.hypot(px - lastRings.x, pz - lastRings.z) > 70) {
+        recenterRings(px, pz);
+        lastRings = { x: px, z: pz };
       }
     },
   };
