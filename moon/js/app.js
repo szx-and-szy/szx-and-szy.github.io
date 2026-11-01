@@ -25,8 +25,8 @@ const SITE = {
 
 const EYE_HEIGHT = 1.7;
 const GRAVITY = 1.62;
-const WALK_SPEED = 1.6;
-const RUN_SPEED = 2.6;
+// 统一为快走速度（阿波罗 17 号实测月面平均行走约 1.4 m/s，小跑可到 2.5–3 m/s）
+const MOVE_SPEED = 2.6;
 const JUMP_SPEED = 1.9; // 起跳速度 => 跳高约 1.1 m，滞空约 2.3 s
 
 const astro = computeScene(SITE.date, SITE);
@@ -346,7 +346,7 @@ function animate() {
   }
 
   const moving = fwd !== 0 || side !== 0;
-  const speed = state.keys.has('ShiftLeft') ? RUN_SPEED : WALK_SPEED;
+  const speed = MOVE_SPEED;
   const len = Math.hypot(fwd, side) || 1;
   const vf = (fwd / len) * speed;
   const vs = (side / len) * speed;
