@@ -17,25 +17,14 @@ import { ShaderPass } from '../vendor/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from '../vendor/postprocessing/UnrealBloomPass.js';
 import { FXAAShader } from '../vendor/shaders/FXAAShader.js';
 import { OutputPass } from '../vendor/postprocessing/OutputPass.js';
+import { SITE, START, EYE_HEIGHT, GRAVITY, MOVE_SPEED, JUMP_SPEED, FOV, BASE_EXPOSURE, SHADOW } from './config.js';
+import { FilmShader, SUN_GLARE_SHADER } from './shaders.js';
 
 const $ = (id) => document.getElementById(id);
 
-/* ---------------- 站点与时刻 ---------------- */
-
-const SITE = {
-  name: '陶拉斯-利特罗谷',
-  lat: 20.1908,
-  lon: 30.7717,
-  date: new Date(Date.UTC(1972, 11, 11, 19, 54, 57)), // 阿波罗 17 号着陆时刻
-};
-
-const EYE_HEIGHT = 1.7;
-const GRAVITY = 1.62;
-// 统一为快走速度（阿波罗 17 号实测月面平均行走约 1.4 m/s，小跑可到 2.5–3 m/s）
-const MOVE_SPEED = 2.6;
-const JUMP_SPEED = 1.9; // 起跳速度 => 跳高约 1.1 m，滞空约 2.3 s
 
 const astro = computeScene(SITE.date, SITE);
+
 
 /* ---------------- 渲染器 ---------------- */
 
@@ -59,14 +48,13 @@ renderer.shadowMap.enabled = true;
 // PCFShadowMap 的 3×3 采样在 2.2 cm texel 下边缘约 4 cm，接近照片的锐度。
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-const BASE_EXPOSURE = 0.56;  // Hapke 比 Lambert 亮 2–4 倍，曝光重定标
 renderer.toneMappingExposure = BASE_EXPOSURE;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
 
-const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 30000);
+const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.1, 30000);
 camera.rotation.order = 'YXZ';
 scene.add(camera);
 
@@ -97,18 +85,18 @@ sunLight.castShadow = true;
  * 偏移量约 2.4 cm，缝隙落到石块自身轮廓以内。范围外没有影子——但那个距离上的石块
  * 只有几个像素，看不出来；近处 45 m 的锐利才是照片的观感来源。
  */
-const shadowSpan = 30;
-const shadowMap = Math.min(isTouch ? 2048 : 4096, renderer.capabilities.maxTextureSize);
+const shadowSpan = SHADOW.span;
+const shadowMap = Math.min(isTouch ? SHADOW.mapLow : SHADOW.mapHigh, renderer.capabilities.maxTextureSize);
 sunLight.shadow.mapSize.set(shadowMap, shadowMap);
 sunLight.shadow.camera.left = -shadowSpan;
 sunLight.shadow.camera.right = shadowSpan;
 sunLight.shadow.camera.top = shadowSpan;
 sunLight.shadow.camera.bottom = -shadowSpan;
 // 光源挂在 420 m 外，深度范围只留 250–640，深度精度全给这一段
-sunLight.shadow.camera.near = 250;
-sunLight.shadow.camera.far = 640;
-sunLight.shadow.bias = -0.000015;
-sunLight.shadow.normalBias = 0.0042;
+sunLight.shadow.camera.near = SHADOW.near;
+sunLight.shadow.camera.far = SHADOW.far;
+sunLight.shadow.bias = SHADOW.bias;
+sunLight.shadow.normalBias = SHADOW.normalBias;
 sunLight.shadow.camera.updateProjectionMatrix();
 scene.add(sunLight);
 scene.add(sunLight.target);
@@ -120,7 +108,7 @@ scene.add(earthShine);
 
 /* ---------------- 地形 ---------------- */
 
-const terrain = createTerrain({ quality, sunDir });
+const terrain = createTerrain({ quality, sunDir, start: START });
 scene.add(terrain.group);
 
 /* ---------------- 天体 ---------------- */
@@ -242,48 +230,6 @@ syncFxaa();
 composer.addPass(fxaaPass);
 
 // 胶片颗粒 + 暗角：模拟 Apollo 所用的 70 mm 胶片与广角镜
-const FilmShader = {
-  uniforms: {
-    tDiffuse: { value: null },
-    uTime: { value: 0 },
-    uGrain: { value: 0.022 },
-    uVignette: { value: 0.20 },
-  },
-  vertexShader: /* glsl */`
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `,
-  fragmentShader: /* glsl */`
-    uniform sampler2D tDiffuse;
-    uniform float uTime;
-    uniform float uGrain;
-    uniform float uVignette;
-    varying vec2 vUv;
-
-    float hash(vec2 p) {
-      return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453123);
-    }
-
-    void main() {
-      vec4 c = texture2D(tDiffuse, vUv);
-
-      // 暗角：真实镜头边缘衰减，月球照片同样存在
-      vec2 d = vUv - 0.5;
-      float vig = 1.0 - uVignette * dot(d, d) * 1.75;
-      c.rgb *= clamp(vig, 0.0, 1.0);
-
-      // 胶片颗粒：暗部更明显（高感光底片的特性）
-      float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
-      float g = hash(vUv * vec2(1280.0, 800.0) + fract(uTime) * 91.7) - 0.5;
-      c.rgb += g * uGrain * (1.0 - lum * 0.55);
-
-      gl_FragColor = c;
-    }
-  `,
-};
 const filmPass = new ShaderPass(FilmShader);
 composer.addPass(filmPass);
 
@@ -302,77 +248,6 @@ composer.addPass(new OutputPass());
  * 同时把周围画面压暗——"亮处更亮、暗处更暗"才是刺眼的来源，
  * 只加白只会变成一个更大的白点，反而更不刺眼。
  */
-const SUN_GLARE_SHADER = {
-  uniforms: {
-    tDiffuse: { value: null },
-    uSunDir: { value: new THREE.Vector3(0, 0, -1) },
-    uCamFwd: { value: new THREE.Vector3(0, 0, -1) },
-    uCamRight: { value: new THREE.Vector3(1, 0, 0) },
-    uCamUp: { value: new THREE.Vector3(0, 1, 0) },
-    uTanHalf: { value: new THREE.Vector2(1, 1) },   // tan(fovX/2), tan(fovY/2)
-    uGlare: { value: 0 },
-  },
-  vertexShader: /* glsl */`
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `,
-  fragmentShader: /* glsl */`
-    uniform sampler2D tDiffuse;
-    uniform vec3 uSunDir;
-    uniform vec3 uCamFwd;
-    uniform vec3 uCamRight;
-    uniform vec3 uCamUp;
-    uniform vec2 uTanHalf;
-    uniform float uGlare;
-    varying vec2 vUv;
-
-    const float R2D = 57.2957795;
-
-    void main() {
-      vec4 c = texture2D(tDiffuse, vUv);
-
-      if (uGlare > 0.002) {
-        // 每个像素还原成世界方向，再和太阳方向求夹角。
-        // 之前是拿太阳的屏幕坐标算像素距离，问题是太阳一偏出画面，
-        // 投影就发散（w→0），距离变成天文数字，眩光直接归零——
-        // 于是"太阳在视野边缘"和"太阳不存在"是同一个结果。角度不会发散。
-        vec2 ndc = vUv * 2.0 - 1.0;
-        vec3 dir = normalize(uCamFwd
-                           + uCamRight * (ndc.x * uTanHalf.x)
-                           + uCamUp    * (ndc.y * uTanHalf.y));
-        float th = acos(clamp(dot(dir, uSunDir), -1.0, 1.0)) * R2D;
-
-        // 眼内散射 / 镜头雾光。Stiles–Holladay 是 1/θ²，那条尾巴掉得太快：
-        // 45° 就只剩 3%，可人眼在 45° 依然觉得晃。这里用 1/θ^1.5 把尾巴拉长，
-        // 让雾光一直铺到画面边缘，同时中心仍然迅速推白。
-        float veil = 0.62 / (1.0 + pow(th / 11.0, 1.5));
-
-        // 太阳本体的过曝核，只在几度以内，bloom 之外再补一层
-        float core = 1.55 * exp(-th * 0.20);
-
-        // 六叶光圈星芒。太阳正对天顶时 cross((0,1,0), 太阳) 退化成零向量，
-        // normalize 会吐 NaN，整幅画面变黑——换一个参考轴就行。
-        vec3 upRef = abs(uSunDir.y) > 0.999 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
-        vec3 sRight = normalize(cross(upRef, uSunDir));
-        vec3 sUp = cross(uSunDir, sRight);
-        float ang = atan(dot(dir, sUp), dot(dir, sRight));
-        float rays = pow(abs(cos(ang * 3.0 + 0.72)), 130.0) * exp(-th * 0.20) * 0.42;
-
-        vec3 add = vec3(1.0, 0.963, 0.918) * (core + veil + rays) * uGlare;
-
-        // 强光把附近压下去。范围只到 20° 左右，更远的对比损失交给上面那层雾光——
-        // 雾光是"提黑"，压暗是"压亮"，两件事的方向不一样，不能混着做。
-        float dim = 1.0 - 0.30 * uGlare * exp(-th * 0.05);
-        c.rgb = c.rgb * dim + add;
-      }
-
-      gl_FragColor = c;
-    }
-  `,
-};
 const sunGlarePass = new ShaderPass(SUN_GLARE_SHADER);
 composer.addPass(sunGlarePass);
 
@@ -447,7 +322,7 @@ updateGlareFrame();
 /* ---------------- 控制与物理 ---------------- */
 
 const state = {
-  feet: terrain.heightAt(0, 0),
+  feet: terrain.heightAt(START.x, START.z),
   vel: 0,
   yaw: THREE.MathUtils.degToRad(88),   // 开场会被 faceIntro 覆盖，此值仅作初值
   pitch: THREE.MathUtils.degToRad(6),
@@ -457,7 +332,7 @@ const state = {
   touchMove: { x: 0, y: 0, active: false },
 };
 
-camera.position.set(0, state.feet + EYE_HEIGHT, 0);
+camera.position.set(START.x, state.feet + EYE_HEIGHT, START.z);
 
 const pitchLimit = Math.PI / 2 - 0.02;
 
@@ -518,6 +393,7 @@ function faceIntro() {
 window.__moon = {
   astro,
   camera,
+  renderer,
   state,
   look(yawDeg, pitchDeg) {
     state.yaw = THREE.MathUtils.degToRad(yawDeg);
@@ -534,6 +410,7 @@ window.__moon = {
   get sunVis() { return sunVis; },
   get exposure() { return renderer.toneMappingExposure; },
   faceSun,
+  terrain,                 // 网格与实例缓冲，供截图对账用
   heightAt: terrain.heightAt,
   earthDir: earthDir.toArray(),
   sunDir: sunDir.toArray(),

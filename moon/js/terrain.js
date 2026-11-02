@@ -1,537 +1,28 @@
 /*
- * terrain.js — 陶拉斯-利特罗谷的程序化月面
+ * terrain.js — 月面装配：Hapke 材质、石块、网格 LOD 与重建调度。
  *
- * 真实数据 / 近似数据的边界，写在最前面，避免后面说不清：
- *  真实：站点经纬度、谷底地形统计特征（坡度中位数 <5°、谷底比山体低约 2 km）、
- *        主要山体的方位与高差（南 Massif 约 +2.3 km、北 Massif 约 +2.2 km）、
- *        月壤反照率量级（0.11–0.14）、无大气导致的绝对硬阴影
- *  近似：地形是程序化生成的，不是 LRO 高程栅格；环坑的位置与直径取自阿波罗 17 号
- *        地质图上的已知环坑（Camelot / Shorty / Van Serg / Sherlock 等），但中心点
- *        做了约 100 m 量级的取整。若要完全写实，需要接入 LRO NAC DEM，本文件不加载。
+ * 这个文件原来什么都干：噪声、坑、山体、贴图、网格、材质、石块，一千多行。
+ * 现在按职责拆开，这里只负责「把零件装成一个能走进去的场景」：
+ *   高程 → height.js    坑场 → craters.js    山体 → massif.js
+ *   噪声 → noise.js     月壤贴图 → regolith.js   网格 → terrain-mesh.js
  */
 
 import * as THREE from 'three';
 import { ConvexGeometry } from '../vendor/geometries/ConvexGeometry.js';
-
-/* ---------------- 噪声 ---------------- */
-
-function hash2(i, j, seed) {
-  let n = (i | 0) * 374761393 + (j | 0) * 668265263 + (seed | 0) * 1274126177;
-  n = (n ^ (n >>> 13)) * 1274126177;
-  n = n ^ (n >>> 16);
-  return (n >>> 0) / 4294967296;
-}
-
-function smooth(t) { return t * t * (3 - 2 * t); }
-
-function valueNoise(x, z, seed) {
-  const xi = Math.floor(x), zi = Math.floor(z);
-  const xf = x - xi, zf = z - zi;
-  const u = smooth(xf), v = smooth(zf);
-  const a = hash2(xi, zi, seed), b = hash2(xi + 1, zi, seed);
-  const c = hash2(xi, zi + 1, seed), d = hash2(xi + 1, zi + 1, seed);
-  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
-}
-
-/** 有符号分形噪声，返回约 -1..1 */
-function fbm(x, z, octaves, seed) {
-  let sum = 0, amp = 1, norm = 0, f = 1;
-  for (let o = 0; o < octaves; o++) {
-    sum += (valueNoise(x * f, z * f, seed + o * 17) * 2 - 1) * amp;
-    norm += amp;
-    amp *= 0.5;
-    f *= 2.03;
-  }
-  return sum / norm;
-}
-
-/* ---------------- 环坑 ---------------- */
-
-const CRATER_CELL = 160; // m
-const craterCache = new Map();
-
-function cellCraters(cx, cz) {
-  const key = cx + ',' + cz;
-  let list = craterCache.get(key);
-  if (list) return list;
-
-  list = [];
-  const n = hash2(cx, cz, 7) < 0.55 ? 2 : 1;
-  for (let k = 0; k < n; k++) {
-    const rx = hash2(cx, cz, 31 + k * 7);
-    const rz = hash2(cx, cz, 53 + k * 7);
-    const rr = hash2(cx, cz, 71 + k * 7);
-    // 半径 2–20 m，偏向小的
-    const radius = 2 + 18 * Math.pow(rr, 2.6);
-    list.push({
-      x: cx * CRATER_CELL + rx * CRATER_CELL,
-      z: cz * CRATER_CELL + rz * CRATER_CELL,
-      r: radius,
-    });
-  }
-  craterCache.set(key, list);
-  return list;
-}
-
-/** 几个有名字的真实环坑（阿波罗 17 号地质图，位置取整到 100 m） */
-const NAMED_CRATERS = [
-  { name: 'Camelot', x: -200, z: 1500, r: 305 },
-  { name: 'Shorty', x: 1900, z: 100, r: 55 },
-  { name: 'Van Serg', x: 2600, z: 500, r: 45 },
-  { name: 'Sherlock', x: 1800, z: 1500, r: 90 },
-  { name: 'Cochise', x: 900, z: -900, r: 200 },
-  { name: 'Steno', x: -4000, z: 2000, r: 100 },
-  { name: 'Henry', x: 700, z: 600, r: 50 },
-  { name: 'Shakespeare', x: 1200, z: 2400, r: 200 },
-  { name: 'Brontë', x: -1500, z: -2200, r: 150 },
-];
-
-function craterProfile(dx, dz, r0) {
-  const r = Math.hypot(dx, dz) / r0;
-  if (r > 2.4) return 0;
-  const depth = r0 * 0.19;          // 深径比约 0.19（月面新鲜小坑偏深）
-  const rimH = r0 * 0.055;
-
-  let h = 0;
-  if (r < 1) h += -depth * (1 - r * r);
-  h += rimH * Math.exp(-Math.pow((r - 1) / 0.3, 2));
-  if (r > 1) h += rimH * 0.35 * Math.exp(-(r - 1) / 1.1);
-  return h;
-}
-
-const MID_CELL = 350; // m，负责 10–55 m 的中尺度环坑，填充中景
-const midCache = new Map();
-
-function midCellCraters(cx, cz) {
-  const key = 'm' + cx + ',' + cz;
-  let list = midCache.get(key);
-  if (list) return list;
-
-  list = [];
-  if (hash2(cx, cz, 311) < 0.92) {
-    const n = 2;
-    for (let k = 0; k < n; k++) {
-      const rx = hash2(cx, cz, 317 + k * 11);
-      const rz = hash2(cx, cz, 331 + k * 11);
-      const rr = hash2(cx, cz, 347 + k * 11);
-      const radius = 10 + 45 * Math.pow(rr, 1.8);
-      list.push({
-        x: cx * MID_CELL + rx * MID_CELL,
-        z: cz * MID_CELL + rz * MID_CELL,
-        r: radius,
-      });
-    }
-  }
-  midCache.set(key, list);
-  return list;
-}
-
-function cratersAt(x, z) {
-  let h = 0;
-  const cx = Math.floor(x / CRATER_CELL);
-  const cz = Math.floor(z / CRATER_CELL);
-  for (let i = -1; i <= 1; i++) {
-    for (let j = -1; j <= 1; j++) {
-      for (const c of cellCraters(cx + i, cz + j)) {
-        h += craterProfile(x - c.x, z - c.z, c.r);
-      }
-    }
-  }
-
-  const mx = Math.floor(x / MID_CELL), mz = Math.floor(z / MID_CELL);
-  for (let i = -1; i <= 1; i++) {
-    for (let j = -1; j <= 1; j++) {
-      for (const c of midCellCraters(mx + i, mz + j)) {
-        h += craterProfile(x - c.x, z - c.z, c.r);
-      }
-    }
-  }
-  for (const c of NAMED_CRATERS) {
-    const d = Math.hypot(x - c.x, z - c.z);
-    if (d < c.r * 2.4) h += craterProfile(x - c.x, z - c.z, c.r);
-  }
-  return h;
-}
-
-/* ---------------- 山体 ---------------- */
-
-/**
- * 各山体用旋转各向异性高斯近似。数值取自阿波罗 17 号轨道照片与地形图：
- * 南 Massif 距着陆点约 7.2 km、高出谷底约 2.3 km；北 Massif 约 4.6 km、2.2 km。
- */
-const MASSIFS = [
-  { x: 4200, z: -5600, sx: 2700, sz: 2100, amp: 2300, rot: -0.55, seed: 101 },
-  { x: -500, z: 4400, sx: 2200, sz: 1700, amp: 2200, rot: 0.25, seed: 211 },
-  { x: 10200, z: 1600, sx: 3400, sz: 4200, amp: 1420, rot: 0.9, seed: 307 }, // 东侧 East Massif：推远抬高比，使山脊仰角低于太阳高度
-  { x: 3600, z: 4300, sx: 2500, sz: 2000, amp: 950, rot: -0.3, seed: 401 },
-  { x: -6800, z: 2600, sx: 3000, sz: 2400, amp: 700, rot: 0.1, seed: 503 }, // 西侧远山
-];
-
-function massifH(x, z) {
-  let h = 0;
-  for (const m of MASSIFS) {
-    const dx = x - m.x, dz = z - m.z;
-    const c = Math.cos(m.rot), s = Math.sin(m.rot);
-    const u = (dx * c + dz * s) / m.sx;
-    const v = (-dx * s + dz * c) / m.sz;
-    const g = Math.exp(-(u * u + v * v));
-    if (g < 0.004) continue;
-    // 两层扰动：900 m 定山形，260 m 给沟壑与破碎感（原来只有一层，山体像光滑沙丘）
-    // 两层扰动：900 m 定山形，260 m 给沟壑与破碎感（原来只有一层，山体像光滑沙丘）
-    const rough = 1 + 0.35 * fbm(x / 900, z / 900, 3, m.seed)
-                  + 0.13 * fbm(x / 260, z / 260, 3, m.seed + 7);
-    h += m.amp * g * rough;
-  }
-  // 谷底向西北开口通马雷，压低远处
-  return h;
-}
-
-/* ---------------- 总高程 ---------------- */
-
-export function heightAt(x, z) {
-  let h = 0;
-
-  // 谷底缓起伏：振幅约 ±7 m，对应坡度中位数 2–3°
-  h += 3.8 * fbm(x / 430, z / 430, 4, 11);
-  h += 1.4 * fbm(x / 68, z / 68, 3, 23);
-  h += 0.22 * fbm(x / 11, z / 11, 3, 37);
-  h += 0.06 * fbm(x / 4, z / 4, 2, 61);
-
-  h += cratersAt(x, z);
-
-  // 微型坑：半径远小于胞宽，只看所在胞
-  for (const c of fineCellCraters(Math.floor(x / FINE_CELL), Math.floor(z / FINE_CELL))) {
-    h += craterProfile(x - c.x, z - c.z, c.r) * 0.75;
-  }
-
-  h += massifH(x, z);
-
-  return h;
-}
-
-/* ---------------- 贴图 ---------------- */
-
-/**
- * 周期值噪声：格点索引按 period 取模，保证 x ∈ [0, period) 时首尾相接。
- * 普通 valueNoise 在贴图边缘会断，平铺就出现接缝。
- */
-function pnoise(x, y, period, seed) {
-  const xi = Math.floor(x), yi = Math.floor(y);
-  const xf = x - xi, yf = y - yi;
-  const u = smooth(xf), v = smooth(yf);
-  const w = (i) => ((i % period) + period) % period;
-  const x0 = w(xi), x1 = w(xi + 1), y0 = w(yi), y1 = w(yi + 1);
-  const a = hash2(x0, y0, seed), b = hash2(x1, y0, seed);
-  const c = hash2(x0, y1, seed), d = hash2(x1, y1, seed);
-  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
-}
-
-/** 周期分形噪声，(u,v) ∈ [0,1)，返回约 -1..1 */
-function pfbm(u, v, base, oct, seed) {
-  let sum = 0, amp = 1, norm = 0, per = base;
-  for (let o = 0; o < oct; o++) {
-    sum += (pnoise(u * per, v * per, per, seed + o * 17) * 2 - 1) * amp;
-    norm += amp;
-    amp *= 0.5;
-    per *= 2;
-  }
-  return sum / norm;
-}
-
-/**
- * Worley 元胞噪声。月壤的表面不是连续起伏的云，而是一颗颗离散的颗粒和土块，
- * fbm 做不出这种东西。每个胞放一个特征点，取到最近点的距离做圆润凸起，
- * 半径按胞随机 => 大小不一的颗粒；胞索引取模 => 可无缝平铺。
- */
-const _W = { f1: 0, id: 0 };
-function worley(x, y, cells, seed) {
-  const xi = Math.floor(x), yi = Math.floor(y);
-  const wc = (i) => ((i % cells) + cells) % cells;
-  let f1 = 9, id = 0;
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      const cx = xi + dx, cy = yi + dy;
-      const wx = wc(cx), wy = wc(cy);
-      const px = cx + hash2(wx, wy, seed);
-      const py = cy + hash2(wx, wy, seed + 91);
-      const ddx = x - px, ddy = y - py;
-      const d = Math.sqrt(ddx * ddx + ddy * ddy);
-      if (d < f1) { f1 = d; id = hash2(wx, wy, seed + 173); }
-    }
-  }
-  _W.f1 = f1; _W.id = id;
-}
-
-/** 单层颗粒高度：0 = 基质平面，1 = 颗粒顶 */
-function granule(u, v, cells, seed, cover) {
-  worley(u * cells, v * cells, cells, seed);
-  const r = cover * (0.45 + 0.55 * _W.id);
-  if (_W.f1 >= r) return 0;
-  const t = 1 - _W.f1 / r;
-  return t * t * (3 - 2 * t);
-}
-
-
-function makeTextures() {
-  /*
-   * 高度场用**物理单位（毫米）**生成，法线直接由 dh/dx 得出（斜率 = 真实坡度）。
-   * 这样法线强度就不是「调出来好看」的，而是可以对上实测值：
-   *
-   *  Helfenstein & Shepard (1999) 用 Apollo 近距立体相机（ALSCC）反演月壤坡面：
-   *    RMS 坡度 15–29° @ 0.85 mm 尺度，6–24° @ 8.5 mm 尺度
-   *  LRO Diviner 的结论一致：未扰动月壤在毫米–厘米尺度是 "visibly rough, hummocky"，
-   *  有大量 clods / clumps；宇航员脚印把表面压平到毫米级，反向印证了这一点。
-   *
-   * 所以这层不能做成「平滑粉尘」，那是被脚印压过之后的状态。
-   * 粒径分布也不是「细尘 + 稀疏颗粒」：80 wt% < 250 μm，但 20 wt% 粗于 1 mm、
-   * 10 wt% 粗于 2 mm——粗碎屑是连续长尾，不是零星点缀。
-   */
-  const size = 1024;
-  const TILE_M = 1.25;
-  const MM_PER_PX = (TILE_M * 1000) / size;   // 1.22 mm/px
-
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d');
-  const img = ctx.createImageData(size, size);
-
-  const H = new Float32Array(size * size);   // 高度，单位 mm
-  const L = new Float32Array(size * size);   // 反照率 0..1
-
-  for (let y = 0; y < size; y++) {
-    const v = y / size;
-    for (let x = 0; x < size; x++) {
-      const u = x / size;
-      const k = y * size + x;
-
-      // 1) 尘埃基底：亚毫米级起伏
-      let h = 0.26 * pfbm(u, v, 16, 4, 911);
-
-      // 2) 微陨石撞击的「雨点坑」，直径约 6 mm
-      h -= 0.38 * granule(u, v, 210, 1201, 0.55);
-
-      // 3) 碎屑：1–8 mm（占重量约 25%）
-      const frag1 = granule(u, v, 150, 733, 0.46);
-      const frag2 = granule(u, v, 70, 301, 0.44);
-      h += 0.55 * frag1 + 1.15 * frag2;
-
-      // 4) 土块 / 团块：1–5 cm（clods，说明月壤有弱黏聚性）
-      const clod = granule(u, v, 24, 401, 0.40);
-      h += 2.60 * clod;
-
-      // 5) 逐颗粒噪声（真实颗粒是棱角状的，不是光滑曲面）
-      h += 0.20 * (hash2(x, y, 77) - 0.5);
-
-      H[k] = h;
-
-      // 反照率：细尘中灰，碎屑与团块略亮也略暗，整体 ±10%
-      let lum = 0.50
-        + 0.055 * pfbm(u, v, 16, 4, 911)
-        + 0.075 * frag1
-        + 0.095 * frag2
-        + 0.060 * clod
-        + 0.045 * (hash2((x * 0.06) | 0, (y * 0.06) | 0, 5) - 0.5);
-      L[k] = lum;
-    }
-  }
-
-  for (let k = 0; k < size * size; k++) {
-    const l = L[k];
-    const i = k * 4;
-    img.data[i] = Math.max(0, Math.min(255, l * 255 * 1.035));
-    img.data[i + 1] = Math.max(0, Math.min(255, l * 255 * 1.0));
-    img.data[i + 2] = Math.max(0, Math.min(255, l * 255 * 0.945));
-    img.data[i + 3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-
-  const albedo = new THREE.CanvasTexture(c);
-  albedo.colorSpace = THREE.SRGBColorSpace;
-  albedo.wrapS = albedo.wrapT = THREE.RepeatWrapping;
-  albedo.anisotropy = 8;
-
-  const nc = document.createElement('canvas');
-  nc.width = nc.height = size;
-  const nctx = nc.getContext('2d');
-  const nimg = nctx.createImageData(size, size);
-  const at = (x, y) => H[((y + size) % size) * size + ((x + size) % size)];
-  const inv = 1 / (2 * MM_PER_PX);
-  let sumSq = 0;
-
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      // 斜率直接用毫米除以毫米，得到的就是物理坡度
-      const gx = (at(x + 1, y) - at(x - 1, y)) * inv;
-      const gy = (at(x, y + 1) - at(x, y - 1)) * inv;
-      sumSq += gx * gx + gy * gy;
-      const nx = -gx, ny = -gy, nz = 1;
-      const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-      const i = (y * size + x) * 4;
-      nimg.data[i] = ((nx / len) * 0.5 + 0.5) * 255;
-      nimg.data[i + 1] = ((ny / len) * 0.5 + 0.5) * 255;
-      nimg.data[i + 2] = ((nz / len) * 0.5 + 0.5) * 255;
-      nimg.data[i + 3] = 255;
-    }
-  }
-  nctx.putImageData(nimg, 0, 0);
-  console.log('[regolith] RMS 坡度', (Math.atan(Math.sqrt(sumSq / (size * size))) * 180 / Math.PI).toFixed(1) + '°');
-
-  const normal = new THREE.CanvasTexture(nc);
-  normal.wrapS = normal.wrapT = THREE.RepeatWrapping;
-  normal.anisotropy = 8;
-  normal.colorSpace = THREE.NoColorSpace;
-
-  return { albedo, normal };
-}
-
-/* ---------------- 近场微型坑 ----------------
- *
- * 真实月面在 0.3–3 m 这个尺度上密度很高（撞击 gardening 的产物），
- * 而上一层最小只有 2–20 m 的坑，脚下基本是平的。
- * 半径远小于胞宽，所以只查所在的那一个胞，不必像大坑那样查 3×3。
- */
-
-const FINE_CELL = 14; // m
-const fineCache = new Map();
-
-function fineCellCraters(cx, cz) {
-  const key = 'f' + cx + ',' + cz;
-  let list = fineCache.get(key);
-  if (list) return list;
-  list = [];
-  for (let k = 0; k < 2; k++) {
-    const rx = hash2(cx, cz, 601 + k * 13);
-    const rz = hash2(cx, cz, 617 + k * 13);
-    const rr = hash2(cx, cz, 631 + k * 13);
-    list.push({
-      x: cx * FINE_CELL + rx * FINE_CELL,
-      z: cz * FINE_CELL + rz * FINE_CELL,
-      r: 0.30 + 2.10 * Math.pow(rr, 1.5),
-    });
-  }
-  fineCache.set(key, list);
-  return list;
-}
-
-/* ---------------- 网格 ---------------- */
-
-function vertexColorFor(h, x, z, out) {
-  // 谷底偏暗（玄武岩质月壤），山体偏高地向亮灰（高地斜长岩质）
-  const t = Math.min(1, Math.max(0, (h + 60) / 900));
-  // 大尺度反照率起伏：月面从来不是均匀一片灰
-  const patch = 0.95 + 0.12 * fbm(x / 130, z / 130, 3, 71) + 0.05 * fbm(x / 26, z / 26, 2, 83);
-  const v = (0.52 + 0.10 * t) * patch;
-  out[0] = v * 1.02;
-  out[1] = v;
-  out[2] = v * 0.96;
-}
-
-
-/** 坡度压暗：法线越偏垂直处越接近裸露基岩，反照率低一档 */
-function applySlopeShade(g) {
-  const n = g.attributes.normal, c = g.attributes.color;
-  for (let i = 0; i < n.count; i++) {
-    const ny = Math.abs(n.getY(i));
-    const k = 1 - 0.52 * Math.pow(1 - ny, 0.75);
-    c.setXYZ(i, c.getX(i) * k, c.getY(i) * k, c.getZ(i) * k * 0.97);
-  }
-  c.needsUpdate = true;
-}
-
-function buildSquare(size, seg, cx, cz, uvScale) {
-  const n = seg + 1;
-  const pos = new Float32Array(n * n * 3);
-  const uv = new Float32Array(n * n * 2);
-  const col = new Float32Array(n * n * 3);
-  const step = size / seg;
-  const c = [0, 0, 0];
-
-  for (let j = 0; j < n; j++) {
-    for (let i = 0; i < n; i++) {
-      const k = j * n + i;
-      const x = cx - size / 2 + i * step;
-      const z = cz - size / 2 + j * step;
-      const h = heightAt(x, z);
-      pos[k * 3] = x;
-      pos[k * 3 + 1] = h;
-      pos[k * 3 + 2] = z;
-      uv[k * 2] = x * uvScale;
-      uv[k * 2 + 1] = z * uvScale;
-      vertexColorFor(h, x, z, c);
-      col[k * 3] = c[0]; col[k * 3 + 1] = c[1]; col[k * 3 + 2] = c[2];
-    }
-  }
-
-  const idx = [];
-  for (let j = 0; j < seg; j++) {
-    for (let i = 0; i < seg; i++) {
-      const a = j * n + i, b = a + 1, cIdx = a + n, d = cIdx + 1;
-      idx.push(a, cIdx, b, b, cIdx, d);
-    }
-  }
-
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  applySlopeShade(g);
-  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
-  return g;
-}
-
-function buildDisc(r0, r1, nr, na, cx, cz, uvScale, yOffset) {
-  const nAng = na + 1;
-  const count = (nr + 1) * nAng;
-  const pos = new Float32Array(count * 3);
-  const uv = new Float32Array(count * 2);
-  const col = new Float32Array(count * 3);
-  const c = [0, 0, 0];
-
-  for (let j = 0; j <= nr; j++) {
-    const t = j / nr;
-    const r = r0 * Math.pow(r1 / r0, t);
-    for (let i = 0; i <= na; i++) {
-      const k = j * nAng + i;
-      const th = (i / na) * Math.PI * 2;
-      const x = Math.cos(th) * r;
-      const z = Math.sin(th) * r;
-      const h = heightAt(cx + x, cz + z) + yOffset;
-      pos[k * 3] = cx + x;
-      pos[k * 3 + 1] = h;
-      pos[k * 3 + 2] = cz + z;
-      uv[k * 2] = x * uvScale;
-      uv[k * 2 + 1] = z * uvScale;
-      vertexColorFor(h, x, z, c);
-      col[k * 3] = c[0]; col[k * 3 + 1] = c[1]; col[k * 3 + 2] = c[2];
-    }
-  }
-
-  const idx = [];
-  for (let j = 0; j < nr; j++) {
-    for (let i = 0; i < na; i++) {
-      const a = j * nAng + i, b = a + 1, cIdx = a + nAng, d = cIdx + 1;
-      // 环状网格的绕序与方格相反，否则法线朝下、整片地形不发亮
-      idx.push(a, b, cIdx, b, d, cIdx);
-    }
-  }
-
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  applySlopeShade(g);
-  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
-  return g;
-}
+import { makeRegolithTextures } from './regolith.js';
+import { buildSquare, buildDisc } from './terrain-mesh.js';
+import { heightAt } from './height.js';
+import { CRATER_DETAIL } from './craters.js';
+import { fbm, hash2 } from './noise.js';
 
 /* ---------------- 对外接口 ---------------- */
 
-export function createTerrain({ quality = 'high', sunDir = new THREE.Vector3(0, 0.24, -1) } = {}) {
-  const tex = makeTextures();
+export function createTerrain({
+  quality = 'high',
+  sunDir = new THREE.Vector3(0, 0.24, -1),
+  start = { x: 0, z: 0 },
+} = {}) {
+  const tex = makeRegolithTextures();
   const material = new THREE.MeshStandardMaterial({
     map: tex.albedo,
     normalMap: tex.normal,
@@ -666,11 +157,11 @@ float hapkeRefl(float mu0, float mu, float g) {
       normal = normalize(normal + (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz);
     }
 
-    // 中景：30 m 与 9 m 两个尺度的起伏。
-    // 网格在这里已经是十几米一个四边形，几何上做不出这么细的坡面，
-    // 只能靠法线补——否则整片远地面被 Hapke 的掠射增益推成一个亮度，看着像沙丘。
+    // 中景：只在网格粗到装不下 30 m 以下坡面时补一点。
+    // 这一层原来是给「平坦地面」打掩护的，强度给到 2.6/1.5，把真实起伏都盖住了；
+    // 现在几何本身有 15–38 m 的丘，假法线必须让位，只保留远处的微弱补充。
     if (dist > 8.0 && dist < 700.0) {
-      float fade = smoothstep(8.0, 34.0, dist) * (1.0 - smoothstep(320.0, 700.0, dist));
+      float fade = smoothstep(20.0, 60.0, dist) * (1.0 - smoothstep(300.0, 700.0, dist));
       float e1 = 1.1, e2 = 0.28;
       float a0 = fbm2(vWPos * 0.034);
       float ax = fbm2((vWPos + vec3(e1, 0.0, 0.0)) * 0.034);
@@ -678,7 +169,7 @@ float hapkeRefl(float mu0, float mu, float g) {
       float b0 = fbm2(vWPos * 0.115);
       float bx = fbm2((vWPos + vec3(e2, 0.0, 0.0)) * 0.115);
       float bz = fbm2((vWPos + vec3(0.0, 0.0, e2)) * 0.115);
-      vec2 grad = (vec2(ax - a0, az - a0) * 2.6 + vec2(bx - b0, bz - b0) * 1.5) * fade;
+      vec2 grad = (vec2(ax - a0, az - a0) * 1.1 + vec2(bx - b0, bz - b0) * 0.7) * fade;
       normal = normalize(normal + (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz);
     }
   }
@@ -808,10 +299,20 @@ float hapkeRefl(float mu0, float mu, float g) {
   const SEAM = 2400;
   const RING_Y = -0.30;   // 整体压低于方格地面，避免 110–120 m 的环带 z-fighting
 
-  const ground = new THREE.Mesh(buildSquare(240, groundSeg, 0, 0, 1 / 1.25), material);
-  const mid = new THREE.Mesh(buildDisc(110, SEAM, 62, ringAng, 0, 0, 1 / 6, RING_Y), material);
-  const far = new THREE.Mesh(buildDisc(SEAM, 20000, 42, ringAng, 0, 0, 1 / 6, RING_Y), material);
+  // LOD：小坑只在近场可见。360 m 外网格已经粗到装不下它们，采样了也是白花时间。
+  // 远景接缝那一圈仍用 MID，和中景最后一圈逐点对齐，否则两片网格会裂开。
+  const midDetail = (cx, cz) => (x, z) => (
+    Math.hypot(x - cx, z - cz) < 360 ? CRATER_DETAIL.NEAR : CRATER_DETAIL.MID
+  );
+  const farDetail = (cx, cz) => (x, z) => (
+    Math.hypot(x - cx, z - cz) < SEAM + 1 ? CRATER_DETAIL.MID : CRATER_DETAIL.FAR
+  );
 
+  const ground = new THREE.Mesh(buildSquare(240, groundSeg, start.x, start.z, 1 / 1.25), material);
+  const mid = new THREE.Mesh(buildDisc(110, SEAM, 62, ringAng, start.x, start.z, 1 / 6, RING_Y, midDetail(start.x, start.z)), material);
+  const far = new THREE.Mesh(buildDisc(SEAM, 20000, 42, ringAng, start.x, start.z, 1 / 6, RING_Y, farDetail(start.x, start.z)), material);
+
+  ground.castShadow = true;
   ground.receiveShadow = true;
   mid.receiveShadow = true;
   far.receiveShadow = false;
@@ -975,48 +476,49 @@ float hapkeRefl(float mu0, float mu, float g) {
     m.setColorAt(k, tmpColor);
   }
 
+  /**
+   * 撒一层石块：极坐标撒点 → 低频密度场筛选 → 幂律粒径。
+   * 三级石块（大块 / 碎屑 / 脚下保底）只是数量、半径、粒径与种子不同，
+   * 原来三份循环体各抄一遍，改一处漏两处。
+   */
+  function scatterRocks(cx, cz, { count, idBase = 0, radius, smin, smax, sink, seed, density = true }) {
+    for (let placed = 0, tries = 0; placed < count && tries < count * 5; tries++) {
+      const id = idBase + tries;
+      const a = rnd(id, seed.angle) * TAU;
+      const d = Math.sqrt(rnd(id, seed.dist)) * radius;
+      const x = cx + Math.cos(a) * d;
+      const z = cz + Math.sin(a) * d;
+      if (density && rnd(id, seed.gate) > rockDensity(x, z)) continue;
+      const s = powerSize(rnd(id, seed.size), smin, smax);
+      pushRock(id, x, z, s, sink(s));
+      placed++;
+    }
+  }
+
   function placeRocks(cx, cz) {
     for (let v = 0; v < ROCK_VARIANTS; v++) { slot[v] = 0; rockMeshes[v].count = 0; }
 
     // 一级：16–150 cm 的块，铺到 60 m（45 m 内都有影子，更远只剩几个像素）
-    const N1 = hi ? 1400 : 500;
-    for (let placed = 0, tries = 0; placed < N1 && tries < N1 * 5; tries++) {
-      const a = rnd(tries, 21) * TAU;
-      const d = Math.sqrt(rnd(tries, 22)) * 60;
-      const x = cx + Math.cos(a) * d;
-      const z = cz + Math.sin(a) * d;
-      if (rnd(tries, 23) > rockDensity(x, z)) continue;
-      const s = powerSize(rnd(tries, 24), 0.16, 1.5);
-      pushRock(tries, x, z, s, Math.min(0.055, s * 0.09));
-      placed++;
-    }
+    scatterRocks(cx, cz, {
+      count: hi ? 1400 : 500, radius: 60, smin: 0.16, smax: 1.5,
+      sink: (s) => Math.min(0.055, s * 0.09),
+      seed: { angle: 21, dist: 22, gate: 23, size: 24 },
+    });
 
     // 二级：3.5–16 cm 的碎屑，只铺 24 m；再远就交给贴图，否则一半是亚像素噪点
-    const N2 = hi ? 3500 : 1100;
-    for (let placed = 0, tries = 0; placed < N2 && tries < N2 * 5; tries++) {
-      const id = 100000 + tries;
-      const a = rnd(id, 31) * TAU;
-      const d = Math.sqrt(rnd(id, 32)) * 24;
-      const x = cx + Math.cos(a) * d;
-      const z = cz + Math.sin(a) * d;
-      if (rnd(id, 33) > rockDensity(x, z)) continue;
-      const s = powerSize(rnd(id, 34), 0.035, 0.16);
-      pushRock(id, x, z, s, s * 0.12);
-      placed++;
-    }
+    scatterRocks(cx, cz, {
+      count: hi ? 3500 : 1100, idBase: 100000, radius: 24, smin: 0.035, smax: 0.16,
+      sink: (s) => s * 0.12,
+      seed: { angle: 31, dist: 32, gate: 33, size: 34 },
+    });
 
     // 近场保底：10 m 内按密度场随机撒的话，脚下有可能是一片空地，
     // 而照片里无论谁站在月面上，脚边总有几块碎屑。这一圈不走密度场。
-    const N3 = hi ? 70 : 28;
-    for (let i = 0; i < N3; i++) {
-      const id = 300000 + i;
-      const a = rnd(id, 41) * TAU;
-      const d = Math.sqrt(rnd(id, 42)) * 10;
-      const x = cx + Math.cos(a) * d;
-      const z = cz + Math.sin(a) * d;
-      const s = powerSize(rnd(id, 44), 0.045, 0.30);
-      pushRock(id, x, z, s, Math.min(0.02, s * 0.08));
-    }
+    scatterRocks(cx, cz, {
+      count: hi ? 70 : 28, idBase: 300000, radius: 10, smin: 0.045, smax: 0.30,
+      sink: (s) => Math.min(0.02, s * 0.08), density: false,
+      seed: { angle: 41, dist: 42, size: 44 },
+    });
 
     for (let v = 0; v < ROCK_VARIANTS; v++) {
       const m = rockMeshes[v];
@@ -1026,29 +528,26 @@ float hapkeRefl(float mu0, float mu, float g) {
     }
   }
 
-  const state = { cx: 0, cz: 0 };
-
   function recenterGround(cx, cz) {
     const g = buildSquare(240, groundSeg, cx, cz, 1 / 1.25);
     ground.geometry.dispose();
     ground.geometry = g;
     placeRocks(cx, cz);
-    state.cx = cx; state.cz = cz;
   }
 
   /** 中景与远景一起重建：接缝上顶点必须成对，分开重建就会裂开 */
   function recenterRings(cx, cz) {
-    const gm = buildDisc(110, SEAM, 62, ringAng, cx, cz, 1 / 6, RING_Y);
+    const gm = buildDisc(110, SEAM, 62, ringAng, cx, cz, 1 / 6, RING_Y, midDetail(cx, cz));
     mid.geometry.dispose();
     mid.geometry = gm;
-    const gf = buildDisc(SEAM, 20000, 42, ringAng, cx, cz, 1 / 6, RING_Y);
+    const gf = buildDisc(SEAM, 20000, 42, ringAng, cx, cz, 1 / 6, RING_Y, farDetail(cx, cz));
     far.geometry.dispose();
     far.geometry = gf;
   }
 
-  placeRocks(0, 0);
+  placeRocks(start.x, start.z);
 
-  let lastGround = { x: 0, z: 0 }, lastRings = { x: 0, z: 0 };
+  let lastGround = { x: start.x, z: start.z }, lastRings = { x: start.x, z: start.z };
 
   return {
     group,
@@ -1067,3 +566,4 @@ float hapkeRefl(float mu0, float mu, float g) {
     },
   };
 }
+
