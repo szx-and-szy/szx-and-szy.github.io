@@ -7,12 +7,26 @@
  * LOD：heightAt 的第三参数控制是否采样小尺度坑。
  * 近场方格全开；中景环带在 360 m 外丢掉 A 层；远景只在接缝那一圈保留 B 层，
  * 保证与中景的接缝顶点逐点一致（否则两片网格会裂开）。
+ *
+ * 曲率：所有顶点减去 r²/2R（r 是到网格中心的距离）。月面是半径 1737.4 km 的球，
+ * 眼高 1.7 m 时真实地平线只有 2.43 km。加这一项之后，2.4 km 之外的地面全部沉到
+ * 视平线以下、被近处地面挡住，地平线由地形本身产生，而不再是 20 km 圆盘的硬边。
  */
 
 import * as THREE from 'three';
 import { heightAt } from './height.js';
 import { CRATER_DETAIL } from './craters.js';
 import { fbm } from './noise.js';
+
+/** 月面曲率半径（m），用于 r²/2R 的下沉项 */
+export const MOON_RADIUS = 1737400;
+
+/** 以 (cx, cz) 为切点，地面按球面下沉的量（≤ 0） */
+export function curveDrop(x, z, cx, cz) {
+  const dx = x - cx;
+  const dz = z - cz;
+  return -(dx * dx + dz * dz) / (2 * MOON_RADIUS);
+}
 
 /** 谷底偏暗（玄武岩质月壤），山体偏高地向亮灰（高地斜长岩质） */
 export function vertexColorFor(h, x, z, out) {
@@ -39,10 +53,12 @@ function applySlopeShade(g) {
 /**
  * vertexAt(i, j) 返回世界坐标 x/z 与 UV 的 u/v。
  * detailAt(x, z) 返回该点需要的坑场精度。
+ * curveCenter = { x, z } 时按球面下沉，切点即该中心。
  */
 export function buildPatch({
   cols, rows, uvScale, yOffset = 0, flip = false, vertexAt,
   detailAt = () => CRATER_DETAIL.NEAR,
+  curveCenter = null,
 }) {
   const count = cols * rows;
   const pos = new Float32Array(count * 3);
@@ -54,7 +70,8 @@ export function buildPatch({
     for (let i = 0; i < cols; i++) {
       const k = j * cols + i;
       const v = vertexAt(i, j);
-      const h = heightAt(v.x, v.z, detailAt(v.x, v.z)) + yOffset;
+      let h = heightAt(v.x, v.z, detailAt(v.x, v.z)) + yOffset;
+      if (curveCenter) h += curveDrop(v.x, v.z, curveCenter.x, curveCenter.z);
       pos[k * 3] = v.x;
       pos[k * 3 + 1] = h;
       pos[k * 3 + 2] = v.z;
@@ -93,6 +110,7 @@ export function buildSquare(size, seg, cx, cz, uvScale, detailAt) {
   const z0 = cz - size / 2;
   return buildPatch({
     cols: n, rows: n, uvScale, detailAt,
+    curveCenter: { x: cx, z: cz },
     vertexAt: (i, j) => {
       const x = x0 + i * step;
       const z = z0 + j * step;
@@ -107,6 +125,7 @@ export function buildDisc(r0, r1, nr, na, cx, cz, uvScale, yOffset, detailAt) {
   const nAng = na + 1;
   return buildPatch({
     cols: nAng, rows: nr + 1, uvScale, yOffset, flip: true, detailAt,
+    curveCenter: { x: cx, z: cz },
     vertexAt: (i, j) => {
       const r = r0 * Math.pow(r1 / r0, j / nr);
       const th = (i / na) * Math.PI * 2;

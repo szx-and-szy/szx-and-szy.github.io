@@ -21,12 +21,20 @@ export const JUMP_SPEED = 1.9;   // 起跳速度 => 跳高约 1.1 m，滞空约 
 export const FOV = 68;
 export const BASE_EXPOSURE = 0.56;   // Hapke 比 Lambert 亮 2–4 倍，曝光重定标
 
+/*
+ * 平行光跟着相机走，所以 near/far 是「相机到光源的距离 ± 地面起伏」。
+ * 原来给 250–640：390 m 的深度范围平摊到阴影图的深度量化上，坑壁这种 40° 以上的
+ * 斜面相邻 texel 的深度差能到 2 cm，远超偏置，self-shadow 就变成一圈圈平行条纹。
+ * 收到 405–445 之后 texel 间的深度差降到毫米级，normalBias 只要抵这一个量。
+ * 配合 PCFSoftShadowMap，坑内壁的条纹从「一眼可见」降到「1:1 下看不出来」。
+ */
 export const SHADOW = {
   span: 30,
   mapHigh: 4096,
   mapLow: 2048,
-  near: 250,
-  far: 640,
-  bias: -0.000015,
-  normalBias: 0.0042,
+  near: 405,
+  far: 445,
+  bias: -0.00015,      // 归一化深度：×40 m ≈ 6 mm，与 390 m 深度范围下的 -1.5e-5 等效
+  normalBias: 0.006,
+  radius: 2.5,
 };

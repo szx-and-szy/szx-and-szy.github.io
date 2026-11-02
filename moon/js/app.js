@@ -46,7 +46,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 // 月面是绝对硬阴影（无大气散射），PCFSoft 的宽核会把 20 cm 碎块的影子糊成一摊。
 // PCFShadowMap 的 3×3 采样在 2.2 cm texel 下边缘约 4 cm，接近照片的锐度。
-renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = BASE_EXPOSURE;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -97,6 +97,7 @@ sunLight.shadow.camera.near = SHADOW.near;
 sunLight.shadow.camera.far = SHADOW.far;
 sunLight.shadow.bias = SHADOW.bias;
 sunLight.shadow.normalBias = SHADOW.normalBias;
+sunLight.shadow.radius = SHADOW.radius;
 sunLight.shadow.camera.updateProjectionMatrix();
 scene.add(sunLight);
 scene.add(sunLight.target);

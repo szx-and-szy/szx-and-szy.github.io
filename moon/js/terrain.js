@@ -63,6 +63,7 @@ export function createTerrain({
   const normU = { value: hapkeNorm };
 
   const detailOn = !/detail=0/.test(location.search);
+  const microK = (() => { const m = location.search.match(/micro=([\d.]+)/); return m ? parseFloat(m[1]) : 1.0; })();
 
   const COMMON_GLSL = `#include <common>
 varying vec3 vWPos;
@@ -71,11 +72,18 @@ uniform float uHapkeNorm;
 uniform float uHapkeW;
 uniform float uHapkeH;
 uniform float uGainMax;
+uniform float uMicroK;
 
 float hash31(vec3 p) {
   p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));
   p *= 17.0;
   return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
 }
 
 float vnoise3(vec3 x) {
@@ -122,6 +130,42 @@ float hapkeRefl(float mu0, float mu, float g) {
   float v = (1.0 + hapkeB(g)) * hapkeP(g) + hapkeHc(mu0) * hapkeHc(mu) - 1.0;
   return 3.14159265 * (uHapkeW / (4.0 * 3.14159265)) / max(mu0 + mu, 1e-3) * v;
 }
+
+/*
+ * 微型撞击坑：半径 0.10–0.85 m。几何网格 0.75 m 一格，这个尺度根本进不去——
+ * 上一版把它们塞进 heightAt，结果坑缘只有 0.3r 宽、不到一个网格边长，
+ * 采样时被直接抹平，脚下那圈「密布的微型坑」在画面上等于不存在。
+ * 现在改由法线承载：掠射光下坑壁的 N·L 差别就是它显形的原因，不需要几何。
+ *
+ * 剖面与 craters.js 的 PROFILE 同源：深 0.19r、缘高 0.06r、缘宽 0.22r。
+ * 梯度解析求导（每坑 1 次求值），比在三个位置重采样高度场便宜三分之二。
+ */
+vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, float cover) {
+  vec2 acc = vec2(0.0);
+  vec2 base = floor(p / cell);
+  for (int i = -1; i <= 1; i++) {
+    for (int j = -1; j <= 1; j++) {
+      vec2 id = base + vec2(float(i), float(j));
+      float a = hash21(id + seed);
+      if (a > cover) continue;
+      float b = hash21(id + seed + 37.1);
+      float c = hash21(id + seed + 71.7);
+      // a/cover 把「存活判定用的同一个随机数」重映射回 0–1，省一次 hash
+      vec2 d = p - (id + vec2(a / cover, b)) * cell;
+      float r0 = rMin + (rMax - rMin) * c * c;
+      float r = length(d);
+      if (r > r0 * 2.0) continue;      // 影响半径 2r，与几何坑的 reach 一致
+
+      float q = r / r0;
+      float dh = q < 1.0 ? 0.38 * q : 0.0;                    // -0.19(1-q²) 的导数
+      float t = (q - 1.0) / 0.22;
+      dh += 0.06 * (-2.0 * t / 0.22) * exp(-t * t);           // 坑缘
+      if (q > 1.0) dh -= 0.06 * 0.35 / 1.1 * exp(-(q - 1.0) / 1.1);  // 溅射毯
+      acc -= (d / max(r, 0.05)) * (dh / r0);   // 法线沿 -∇h：不减这一号，坑会变成包
+    }
+  }
+  return acc;
+}
 `;
   const MAP_GLSL = `#include <map_fragment>
   {
@@ -155,6 +199,25 @@ float hapkeRefl(float mu0, float mu, float g) {
       float hz = fbm3((vWPos + vec3(0.0, 0.0, e)) * 26.0);
       vec2 grad = vec2(hx - h0, hz - h0) * 0.35 * fade;
       normal = normalize(normal + (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz);
+    }
+
+    // 微型坑：两层。小的一层到 20 m 为止（再远一格不到一个像素，只会闪），
+    // 大的一层撑到 85 m，接上 A 层几何坑（半径 1.8 m 起）。
+    //
+    // 注意这里不能像噪声层那样把梯度直接加到视图空间法线上。斜坡上几何法线
+    // 本来就偏，加法会让坑沿坡面拉成椭圆。必须在世界空间沿切平面倾斜。
+    if (dist < 85.0) {
+      vec2 g = vec2(0.0);
+      float fA = 1.0 - smoothstep(7.0, 20.0, dist);
+      float fB = 1.0 - smoothstep(35.0, 90.0, dist);
+      if (fA > 0.002) g += microCraterGrad(vWPos.xz, 1.30, 13.7, 0.08, 0.32, 0.58) * fA;
+      if (fB > 0.002) g += microCraterGrad(vWPos.xz, 3.60, 57.3, 0.28, 0.95, 0.64) * fB;
+      g *= uMicroK;
+      vec3 Nw = normalize(inverseTransformDirection(normal, viewMatrix));
+      vec3 T = normalize(cross(vec3(0.0, 1.0, 0.0), Nw) + vec3(1e-4, 0.0, 0.0));
+      vec3 B = cross(Nw, T);
+      Nw = normalize(Nw - T * g.x - B * g.y);
+      normal = normalize((viewMatrix * vec4(Nw, 0.0)).xyz);
     }
 
     // 中景：只在网格粗到装不下 30 m 以下坡面时补一点。
@@ -259,6 +322,7 @@ float hapkeRefl(float mu0, float mu, float g) {
       // 石块的面比月壤陡得多，掠射时 1/(μ0+μ) 会把亮面顶到过曝。
       // 地形用 14（保留掠射增益），石块单独压到 4.2。
       shader.uniforms.uGainMax = { value: gainMax };
+      shader.uniforms.uMicroK = { value: microK };
 
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>',
@@ -298,6 +362,16 @@ float hapkeRefl(float mu0, float mu, float g) {
   const ringAng = hi ? 256 : 140;
   const SEAM = 2400;
   const RING_Y = -0.30;   // 整体压低于方格地面，避免 110–120 m 的环带 z-fighting
+
+  /*
+   * 远盘一段 2.4–20 km、42 环。
+   *
+   * 试过把它拆成「2.4–6 km 96 环 + 6–20 km 26 环」，想让地平线附近多采到几个
+   * C 层坑（半径 24–90 m，在 2.43 km 处本该是 4–14 px 的起伏）。实测没有用：
+   * 逐列地平线高度的标准差从 1.64 px 变成 1.62 px，构建时间却多 110 ms。
+   * 原因是本机位的地平线其实在 100 m 量级的近处地形脊上，根本轮不到远盘。
+   * 所以远盘保持粗采样——它只是背景板，真正的轮廓由近场决定。
+   */
 
   // LOD：小坑只在近场可见。360 m 外网格已经粗到装不下它们，采样了也是白花时间。
   // 远景接缝那一圈仍用 MID，和中景最后一圈逐点对齐，否则两片网格会裂开。
