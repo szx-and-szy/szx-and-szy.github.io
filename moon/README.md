@@ -187,10 +187,10 @@ p50 与 p99 基本重合。p10 偏高是因为照片里有大量脚印与岩石�
 
 ## 改站点或改时间
 
-编辑 `js/app.js` 顶部的 `SITE`：
+编辑 `js/config.js` 顶部导出的 `SITE`：
 
 ```js
-const SITE = {
+export const SITE = {
   name: '陶拉斯-利特罗谷',
   lat: 20.1908,
   lon: 30.7717,
