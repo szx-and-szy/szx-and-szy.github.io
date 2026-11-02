@@ -59,7 +59,8 @@ renderer.shadowMap.enabled = true;
 // PCFShadowMap 的 3×3 采样在 2.2 cm texel 下边缘约 4 cm，接近照片的锐度。
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.56;  // Hapke 比 Lambert 亮 2–4 倍，曝光重定标
+const BASE_EXPOSURE = 0.56;  // Hapke 比 Lambert 亮 2–4 倍，曝光重定标
+renderer.toneMappingExposure = BASE_EXPOSURE;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
@@ -128,35 +129,43 @@ const SKY_RADIUS = 11000;
 
 // 太阳：角直径 0.53°，按距离换算实际半径
 const sunAngRad = THREE.MathUtils.degToRad(astro.sun.angDiamDeg) / 2;
+/*
+ * 太阳的亮度必须给到 HDR 量级（线性值 3 以上），不能只给 1.0。
+ * 月面上太阳的照度约 1.3×10⁵ lux，比月面本身亮 6 个数量级；
+ * 给 1.0 的话过曝刚好卡在白色，既不会有强溢光，也就不可能"刺眼"。
+ * 3.2 经过 ACES 仍然是白，但 bloom 是在 tone mapping 之前取样的，会明显溢出。
+ */
 const sunDisc = new THREE.Mesh(
   new THREE.SphereGeometry(1, 24, 16),
   new THREE.MeshBasicMaterial({ color: 0xffffff })
 );
+sunDisc.material.color.setRGB(3.2, 3.06, 2.86);
 sunDisc.scale.setScalar(SKY_RADIUS * Math.tan(sunAngRad));
 sunDisc.position.copy(sunDir).multiplyScalar(SKY_RADIUS);
 scene.add(sunDisc);
 
 // 太阳辉光（胶片过曝感）
+let sunSprite;
 {
   const c = document.createElement('canvas');
   c.width = c.height = 128;
   const g = c.getContext('2d').createRadialGradient(64, 64, 0, 64, 64, 64);
   g.addColorStop(0, 'rgba(255,255,255,1.0)');
-  g.addColorStop(0.08, 'rgba(255,253,245,0.92)');
-  g.addColorStop(0.3, 'rgba(255,248,232,0.30)');
-  g.addColorStop(0.62, 'rgba(255,242,220,0.07)');
+  g.addColorStop(0.08, 'rgba(255,253,245,0.95)');
+  g.addColorStop(0.3, 'rgba(255,248,232,0.42)');
+  g.addColorStop(0.62, 'rgba(255,242,220,0.12)');
   g.addColorStop(1, 'rgba(255,240,215,0)');
   const ctx = c.getContext('2d');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 128, 128);
   const tex = new THREE.CanvasTexture(c);
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+  sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
     map: tex, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true,
-    transparent: true, opacity: 0.9,
+    transparent: true, opacity: 0.95,
   }));
-  sprite.scale.setScalar(SKY_RADIUS * 0.085);
-  sprite.position.copy(sunDir).multiplyScalar(SKY_RADIUS * 0.999);
-  scene.add(sprite);
+  sunSprite.scale.setScalar(SKY_RADIUS * 0.095);
+  sunSprite.position.copy(sunDir).multiplyScalar(SKY_RADIUS * 0.999);
+  scene.add(sunSprite);
 }
 
 // 地球
@@ -281,6 +290,99 @@ composer.addPass(filmPass);
 // 必须是最后一个 pass：EffectComposer 的 render target 保持线性空间，
 // 色调映射与 sRGB 转换只在直接渲染到屏幕时自动发生，中间层不会
 composer.addPass(new OutputPass());
+
+/*
+ * 太阳眩光（放在 OutputPass 之后，直接在显示空间叠加）。
+ *
+ * 月球上没有大气，太阳是一个 0.53° 的锐利白盘——但那不代表"能舒服地看"。
+ * 真实情况是照度 1.3×10⁵ lux，直视会瞬间致盲，人眼会立刻收缩瞳孔、流泪，
+ * 视野里只剩一片白和被烧出来的残影。
+ *
+ * 这里做两件事：太阳附近叠加强过曝（核心 + 光晕 + 光圈叶片的六道星芒），
+ * 同时把周围画面压暗——"亮处更亮、暗处更暗"才是刺眼的来源，
+ * 只加白只会变成一个更大的白点，反而更不刺眼。
+ */
+const SUN_GLARE_SHADER = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uSunUV: { value: new THREE.Vector2(0.5, 0.5) },
+    uGlare: { value: 0 },
+    uAspect: { value: 1 },
+  },
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tDiffuse;
+    uniform vec2 uSunUV;
+    uniform float uGlare;
+    uniform float uAspect;
+    varying vec2 vUv;
+
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+
+      if (uGlare > 0.002) {
+        vec2 p = (vUv - uSunUV) * vec2(uAspect, 1.0);
+        float d = length(p);
+
+        float core = exp(-d * 9.0) * 1.22;          // 太阳本体附近彻底过曝
+        float halo = exp(-d * 3.0) * 0.28;           // 中层雾光，范围要收得住
+        float ang = atan(p.y, p.x);
+        // 六道光圈叶片，细而短；真实镜头是细线，不是粗光柱
+        float rays = pow(abs(cos(ang * 3.0 + 0.72)), 130.0) * exp(-d * 7.0) * 0.36;
+        vec3 add = vec3(1.0, 0.963, 0.918) * (core + halo + rays) * uGlare;
+
+        // 瞳孔收缩：直视太阳时周围明显变暗，暗处变暗才是"刺眼"的来源。
+        // 只加白不压暗，只会让整个画面更亮，反而不刺眼。
+        float dim = 1.0 - 0.22 * uGlare * exp(-d * 1.6);
+        c.rgb = c.rgb * dim + add;
+      }
+
+      gl_FragColor = c;
+    }
+  `,
+};
+const sunGlarePass = new ShaderPass(SUN_GLARE_SHADER);
+composer.addPass(sunGlarePass);
+
+const _camDir = new THREE.Vector3();
+const _sunNDC = new THREE.Vector3();
+
+/**
+ * 每帧更新太阳的眩光强度与屏幕位置。
+ * 同时把"背后"的太阳本体彻底关掉——sprite 的包围球有 3.4° 的半径，
+ * 贴在视野边缘时会被视锥判为相交而继续绘制，投影翻转后就是一片莫名其妙的光斑。
+ */
+let sunVis = 0;   // 0 = 太阳在视野外或背后，1 = 正对太阳
+
+function updateSunGlare() {
+  _camDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
+  const facing = _camDir.dot(sunDir);
+  const front = facing > -0.02;
+  sunSprite.visible = front;
+  sunDisc.visible = front;
+
+  const u = sunGlarePass.material.uniforms;
+  if (postDisabled || !front) { u.uGlare.value = 0; sunVis = 0; return; }
+
+  // 只有真的把视线转到太阳上才触发。太阳在视野边上（开场视角离轴约 32°，
+  // facing≈0.85）时不该压暗，否则玩家会觉得画面莫名其妙地发灰。
+  const vis = THREE.MathUtils.smoothstep(facing, 0.80, 0.97);
+  if (vis <= 0.002) { u.uGlare.value = 0; sunVis = 0; return; }
+
+  camera.updateMatrixWorld();
+  _sunNDC.copy(sunDir).multiplyScalar(SKY_RADIUS).project(camera);
+  u.uSunUV.value.set(_sunNDC.x * 0.5 + 0.5, _sunNDC.y * 0.5 + 0.5);
+  u.uGlare.value = vis;
+  sunVis = vis;
+}
+
+sunGlarePass.material.uniforms.uAspect.value = innerWidth / innerHeight;
 
 /* ---------------- 控制与物理 ---------------- */
 
@@ -503,6 +605,11 @@ function animate() {
   sunLight.position.copy(camera.position).addScaledVector(sunDir, 420);
   sunLight.target.position.copy(camera.position);
 
+  updateSunGlare();
+  // 直视太阳时的"收曝光"：这是刺眼的核心，不是靠屏幕叠加白光。
+  // 真实相机/人眼对 1.3×10⁵ lux 会立刻把曝光拉下去，除了太阳，整个画面都沉下去。
+  renderer.toneMappingExposure = BASE_EXPOSURE * (1 - 0.60 * sunVis);
+
   filmPass.material.uniforms.uTime.value = clock.elapsedTime;
 
   if (postDisabled) {
@@ -552,6 +659,7 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
   if (bloomPass.resolution) bloomPass.resolution.set(innerWidth * 0.5, innerHeight * 0.5);
+  sunGlarePass.material.uniforms.uAspect.value = innerWidth / innerHeight;
   syncFxaa();
 });
 
