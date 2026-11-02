@@ -55,7 +55,9 @@ const SS = (() => {
 renderer.setPixelRatio(Math.min(devicePixelRatio * SS, 2.6));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// 月面是绝对硬阴影（无大气散射），PCFSoft 的宽核会把 20 cm 碎块的影子糊成一摊。
+// PCFShadowMap 的 3×3 采样在 2.2 cm texel 下边缘约 4 cm，接近照片的锐度。
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.56;  // Hapke 比 Lambert 亮 2–4 倍，曝光重定标
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -79,16 +81,34 @@ const earthDir = new THREE.Vector3(...astro.earth.world).normalize();
 
 const sunLight = new THREE.DirectionalLight(0xfff6ea, 5.2);
 sunLight.castShadow = true;
-sunLight.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048);
-const shadowSpan = 90;
+
+/*
+ * 阴影精度必须按「低太阳角」标定，这是之前影子脱离石块的根因。
+ *
+ * shadow map 的 texel 是垂直于光线方向的尺寸，投到地面上要除以 sin(太阳高度)：
+ * 太阳只有 13.85° 时，沿地面方向被拉伸 1/sin(13.85°) ≈ 4.2 倍。
+ * 旧配置 180 m / 2048 = 8.8 cm 的 texel，落到地面上就是 37 cm 的有效分辨率，
+ * 20–50 cm 的石块根本留不住自己的影子；为了压掉阴影 acne 又把 normalBias 加到 3.5 cm，
+ * 而 normalBias 造成的偏移动量约为 bias/tan(太阳高度)，于是影子被整体推开十几厘米，
+ * 石头和影子之间就出现那道缝。
+ *
+ * 现在：范围收到 ±45 m、贴图 4096，texel 2.2 cm（地面约 9 cm），normalBias 降到 6 mm，
+ * 偏移量约 2.4 cm，缝隙落到石块自身轮廓以内。范围外没有影子——但那个距离上的石块
+ * 只有几个像素，看不出来；近处 45 m 的锐利才是照片的观感来源。
+ */
+const shadowSpan = 30;
+const shadowMap = Math.min(isTouch ? 2048 : 4096, renderer.capabilities.maxTextureSize);
+sunLight.shadow.mapSize.set(shadowMap, shadowMap);
 sunLight.shadow.camera.left = -shadowSpan;
 sunLight.shadow.camera.right = shadowSpan;
 sunLight.shadow.camera.top = shadowSpan;
 sunLight.shadow.camera.bottom = -shadowSpan;
-sunLight.shadow.camera.near = 1;
-sunLight.shadow.camera.far = 900;
-sunLight.shadow.bias = -0.0006;
-sunLight.shadow.normalBias = 0.035;
+// 光源挂在 420 m 外，深度范围只留 250–640，深度精度全给这一段
+sunLight.shadow.camera.near = 250;
+sunLight.shadow.camera.far = 640;
+sunLight.shadow.bias = -0.000015;
+sunLight.shadow.normalBias = 0.0042;
+sunLight.shadow.camera.updateProjectionMatrix();
 scene.add(sunLight);
 scene.add(sunLight.target);
 

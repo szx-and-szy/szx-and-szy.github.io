@@ -11,6 +11,7 @@
  */
 
 import * as THREE from 'three';
+import { ConvexGeometry } from '../vendor/geometries/ConvexGeometry.js';
 
 /* ---------------- 噪声 ---------------- */
 
@@ -578,6 +579,7 @@ uniform vec3 uSunDir;
 uniform float uHapkeNorm;
 uniform float uHapkeW;
 uniform float uHapkeH;
+uniform float uGainMax;
 
 float hash31(vec3 p) {
   p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));
@@ -630,7 +632,6 @@ float hapkeRefl(float mu0, float mu, float g) {
   return 3.14159265 * (uHapkeW / (4.0 * 3.14159265)) / max(mu0 + mu, 1e-3) * v;
 }
 `;
-
   const MAP_GLSL = `#include <map_fragment>
   {
     float dist = length(vWPos - cameraPosition);
@@ -683,6 +684,51 @@ float hapkeRefl(float mu0, float mu, float g) {
   }
 `;
 
+  /**
+   * 石块表面：真实碎块不是一坨均匀的灰浆。它是麻点 + 明暗斑 + 少量冲击熔融的暗色玻璃点。
+   * 用世界坐标噪声而不是贴图，因为每块石头尺寸差 40 倍，贴图一缩放就露馅。
+   */
+  const ROCK_MAP_GLSL = `#include <map_fragment>
+  {
+    // 逐面色调（由几何的 aTint 传入）
+    float d = length(vWPos - cameraPosition);
+    float nearK = 1.0 - smoothstep(16.0, 46.0, d);
+    // 矿物斑块只做两个低频尺度：28 cm 与 9 cm。
+    // 频率一高就变成「盐和胡椒」，看起来像发霉的面包——真实碎块的大部分表面
+    // 是干净的解理面，深浅变化是成片的矿物料，不是满屏麻点。
+    float n1 = fbm3(vWPos * 3.1 + 11.3);
+    float n2 = fbm3(vWPos * 8.7 + 3.7);
+    float k = 0.90 + 0.20 * (n1 * 0.5 + n2 * 0.5);
+    // 每个解理面自己的色调，权重在近处才拿出来（远处面数不到一个像素会闪）
+    k *= mix(1.0, 0.84 + 0.34 * vFaceTint, nearK);
+    diffuseColor.rgb *= mix(1.0, k, nearK);
+  }
+`;
+
+  /**
+   * 石块表面的凹凸：只调反照率会像喷了一层灰，必须让法线也跟着起伏，
+   * 掠射光一擦，颗粒才有实体的高光与阴影。
+   */
+  const ROCK_NORMAL_GLSL = `#include <normal_fragment_maps>
+  {
+    float d = length(vWPos - cameraPosition);
+    float fade = 1.0 - smoothstep(14.0, 46.0, d);
+    if (fade > 0.002) {
+      float e = 0.006;
+      float h0 = fbm3(vWPos * 26.0);
+      float hx = fbm3((vWPos + vec3(e, 0.0, 0.0)) * 26.0);
+      float hz = fbm3((vWPos + vec3(0.0, 0.0, e)) * 26.0);
+      float h2 = fbm3(vWPos * 7.5);
+      float hx2 = fbm3((vWPos + vec3(0.010, 0.0, 0.0)) * 7.5);
+      float hz2 = fbm3((vWPos + vec3(0.0, 0.0, 0.010)) * 7.5);
+      // 强度压到很低：每个三角形本来就是硬边，再加法线扰动会在面上留下
+      // 一块块方格状的明暗，看起来像编织纹。石块的粗糙感交给轮廓与棱线。
+      vec2 grad = (vec2(hx - h0, hz - h0) * 0.16 + vec2(hx2 - h2, hz2 - h2) * 0.30) * fade;
+      normal = normalize(normal + (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz);
+    }
+  }
+`;
+
   const HAPKE_GLSL = `
   {
     vec3 Nw = inverseTransformDirection(normal, viewMatrix);
@@ -694,7 +740,7 @@ float hapkeRefl(float mu0, float mu, float g) {
     // 与 Lambert 的比值。晨昏线附近 μ0→0 时会爆，但真正的爆点是钳位本身：
     // 一旦大面积触到上限，法线再怎么变亮度都是同一个常数，地面立刻变成白纸。
     // 所以上限放得很宽，靠 μ 的下限控制掠射增益，让整个亮度区间都保留响应。
-    float gain = clamp(R / (uHapkeNorm * mu0), 0.0, 14.0);
+    float gain = clamp(R / (uHapkeNorm * mu0), 0.0, uGainMax);
 
     // 远距离回退到朗伯：10 km 外的山体一个四边形 500 m，几何上根本载不住粗糙度，
     // 再按 Hapke 的掠射增益算，亮面就会一路顶到饱和，变成一张白剪纸。
@@ -705,28 +751,53 @@ float hapkeRefl(float mu0, float mu, float g) {
   }
   vec3 totalDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;`;
 
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.uSunDir = sunU;
-    shader.uniforms.uHapkeNorm = normU;
-    shader.uniforms.uHapkeW = { value: HAPKE_W };
-    shader.uniforms.uHapkeH = { value: HAPKE_H };
+  /**
+   * 把 Hapke 反射率注入任意 MeshStandardMaterial。
+   *
+   * 石块必须和地面用同一套模型。地面按 Hapke 算出来比 Lambert 亮 2–4 倍，
+   * 石块若还用 Lambert，亮面只有地面的三分之一亮度，整块石头就成了一团纯黑剪影——
+   * 而阿波罗照片里石块的受光面与月壤亮度相当（浅色角砾岩甚至更亮）。
+   * 这一条不修，石头再怎么改形状也还是「贴纸」。
+   */
+  function applyHapke(mat, withDetail, gainMax = 14.0) {
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uSunDir = sunU;
+      shader.uniforms.uHapkeNorm = normU;
+      shader.uniforms.uHapkeW = { value: HAPKE_W };
+      shader.uniforms.uHapkeH = { value: HAPKE_H };
+      // 石块的面比月壤陡得多，掠射时 1/(μ0+μ) 会把亮面顶到过曝。
+      // 地形用 14（保留掠射增益），石块单独压到 4.2。
+      shader.uniforms.uGainMax = { value: gainMax };
 
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
-      .replace('#include <begin_vertex>',
-               '#include <begin_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>',
+                 '#include <common>\nvarying vec3 vWPos;\n' +
+                 (withDetail ? '' : 'attribute float aTint;\nvarying float vFaceTint;'))
+        .replace('#include <begin_vertex>',
+                 '#include <begin_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;' +
+                 (withDetail ? '' : '\n  vFaceTint = aTint;'));
 
-    let f = shader.fragmentShader.replace('#include <common>', COMMON_GLSL);
-    if (detailOn) {
-      f = f.replace('#include <map_fragment>', MAP_GLSL)
-           .replace('#include <normal_fragment_maps>', NORMAL_GLSL);
-    }
-    f = f.replace(
-      'vec3 totalDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;',
-      HAPKE_GLSL);
-    shader.fragmentShader = f;
-  };
-  material.customProgramCacheKey = () => (detailOn ? 'regolith-hapke-detail' : 'regolith-hapke');
+      let f = shader.fragmentShader.replace('#include <common>', COMMON_GLSL);
+      if (withDetail) {
+        f = f.replace('#include <map_fragment>', MAP_GLSL)
+             .replace('#include <normal_fragment_maps>', NORMAL_GLSL);
+      } else {
+        // 逐面法线色调的 varying 只在石块 program 里声明
+        f = f.replace('varying vec3 vWPos;', 'varying vec3 vWPos;\nvarying float vFaceTint;');
+        f = f.replace('#include <map_fragment>', ROCK_MAP_GLSL)
+             .replace('#include <normal_fragment_maps>', ROCK_NORMAL_GLSL);
+      }
+      f = f.replace(
+        'vec3 totalDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;',
+        HAPKE_GLSL);
+      shader.fragmentShader = f;
+    };
+    mat.customProgramCacheKey = () =>
+      (withDetail ? (detailOn ? 'regolith-hapke-detail' : 'regolith-hapke') : 'rock-hapke');
+    return mat;
+  }
+
+  applyHapke(material, true);
 
   const hi = quality === 'high';
   const groundSeg = hi ? 320 : 140;
@@ -748,74 +819,211 @@ float hapkeRefl(float mu0, float mu, float g) {
   const group = new THREE.Group();
   group.add(ground, mid, far);
 
-  /* 石块：用实例化网格，只铺在近场 */
-  // SphereGeometry 是索引几何，computeVertexNormals 给的是平滑法线；
-  // 之前用 Icosahedron 属于非索引几何，每个面独立法线，近距离就是一堆三角面片
-  const rockGeo = new THREE.SphereGeometry(0.5, 18, 13);
-  {
-    const p = rockGeo.attributes.position;
-    for (let i = 0; i < p.count; i++) {
-      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-      const n = 1 + 0.26 * Math.sin(x * 7.1 + z * 3.3)
-                  + 0.17 * Math.cos(y * 5.7 + x * 2.1)
-                  + 0.11 * Math.sin(z * 9.4 + y * 4.2);
-      p.setXYZ(i, x * n, y * n * 0.92, z * n);
-    }
-    rockGeo.computeVertexNormals();
-  }
-  const rockMat = new THREE.MeshStandardMaterial({
-    color: 0xb2ab9b, roughness: 0.88, metalness: 0.0,
-  });
-  const rockCount = hi ? 520 : 220;
-  const rocks = new THREE.InstancedMesh(rockGeo, rockMat, rockCount);
-  rocks.castShadow = true;
-  // 不接收阴影：2048 阴影图覆盖 180 m（约 8.8 cm/texel），
-  // 0.2–1.4 m 的岩石只有几个 texel，自阴影精度不足会把整块压成全黑
-  rocks.receiveShadow = false;
-  rocks.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  group.add(rocks);
+  /* ---------------- 石块 ----------------
+   *
+   * 阿波罗照片里的月面碎块不是鹅卵石。它们是撞击破碎产生的角砾：
+   * 有平坦的解理面、锐利的棱线，三轴比例不均匀（多数偏扁平），
+   * 尺寸分布是连续幂律——几厘米的碎屑成片，几十厘米的块零星散布。
+   *
+   * 球体加正弦扰动永远做不出这个。球面处处曲率同号，怎么扰都是一颗土豆。
+   * 这里改用凸包：随机球面点取 ConvexGeometry，面天然是平面、棱天然是锐角；
+   * 输出是非索引几何且带面法线，硬边不会被平滑掉，正是石块该有的样子。
+   */
+  const TAU = Math.PI * 2;
+  const rnd = (a, b) => hash2(a | 0, b | 0, 9331);
 
-  // 细砾石：近场 30 m 内的高密度小石子，替代贴图重复感
-  const gravelGeo = new THREE.IcosahedronGeometry(0.5, 0);
-  const gravelMat = new THREE.MeshStandardMaterial({
-    color: 0x6f6a61, roughness: 1.0, metalness: 0.0,
+  function makeRockGeometry(seed) {
+    // 16–25 个顶点 => 28–48 个面。11 个顶点做出来只有三四个大三角面，
+    // 近看是「三角板」而不是石头；真实碎块的可见面大约在 20–40 之间。
+    const n = 18 + Math.floor(rnd(seed, 1) * 11);
+    const tiers = 3 + Math.floor(rnd(seed, 2) * 2);   // 3–4 档半径，制造长短不一的棱
+    const tierR = [];
+    for (let t = 0; t < tiers; t++) tierR.push(0.72 + 0.28 * rnd(seed, 10 + t));
+
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      const u = rnd(seed, 100 + i * 4) * 2 - 1;
+      const th = rnd(seed, 101 + i * 4) * TAU;
+      const rxy = Math.sqrt(Math.max(0, 1 - u * u));
+      const rad = 0.5 * tierR[Math.floor(rnd(seed, 102 + i * 4) * tiers)];
+      pts.push(new THREE.Vector3(
+        Math.cos(th) * rxy * rad,
+        u * rad,
+        Math.sin(th) * rxy * rad,
+      ));
+    }
+
+    // 三轴各向异性：宽 > 厚。照片里的碎块大多是扁平的板状/楔状，不是圆球
+    const sx = 0.86 + 0.38 * rnd(seed, 3);
+    const sy = 0.56 + 0.26 * rnd(seed, 4);
+    const sz = 0.86 + 0.38 * rnd(seed, 5);
+    let minY = Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      p.x *= sx; p.y *= sy; p.z *= sz;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    /*
+     * 解理面切割：随机取 2–3 个平面，把凸出去的顶点压回平面上。
+     * 这一步决定「像石头」还是「像骰子」——真实碎块是沿着矿物解理面断开的，
+     * 每个碎块都有两三个又大又平的面，其余是不规则的小面。
+     * 只做径向扰动做不出平面，只会得到一颗更歪的土豆。
+     */
+    const cuts = 2 + Math.floor(rnd(seed, 6) * 2);
+    const nv = new THREE.Vector3();
+    for (let c = 0; c < cuts; c++) {
+      const cu = rnd(seed, 60 + c * 3) * 2 - 1;
+      const ct = rnd(seed, 61 + c * 3) * TAU;
+      const cr = Math.sqrt(Math.max(0, 1 - cu * cu));
+      nv.set(Math.cos(ct) * cr, cu, Math.sin(ct) * cr);
+      const off = 0.5 * (0.50 + 0.34 * rnd(seed, 62 + c * 3));
+      for (const p of pts) {
+        const t = p.dot(nv) - off;
+        if (t > 0) p.addScaledVector(nv, -t);
+      }
+    }
+
+    // 底部压平：把最低一层顶点压到同一高度，凸包就会给出一个平底。
+    // 这条直接决定「影子会不会和石头分开」——底面不平的石头只靠一两个尖点着地，
+    // 本身就在视觉上飘着，影子当然贴不住。
+    const flat = minY + (maxY - minY) * 0.12;
+    for (const p of pts) if (p.y < flat) p.y = minY;
+
+    const g = new ConvexGeometry(pts);
+
+    /*
+     * 逐面随机色调。真实月面碎块是多晶角砾岩，每个解理面的矿物组成不同，
+     * 反照率能差出 20–30%。同一块石头上一律同一个灰，才会显得像塑料模型。
+     * ConvexGeometry 输出非索引几何（每 3 个顶点一个面），正好按三角形写值。
+     */
+    const vCount = g.attributes.position.count;
+    const tints = new Float32Array(vCount);
+    for (let t = 0; t < vCount / 3; t++) {
+      const v = rnd(seed, 900 + t);
+      tints[t * 3] = tints[t * 3 + 1] = tints[t * 3 + 2] = v;
+    }
+    g.setAttribute('aTint', new THREE.BufferAttribute(tints, 1));
+
+    // 平移到「底面 y = 0」，摆放时 position.y 直接等于地面高度，不用再猜偏移量
+    const pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) pos.setY(i, pos.getY(i) - minY);
+    pos.needsUpdate = true;
+    g.computeBoundingBox();
+    g.computeBoundingSphere();
+    return g;
+  }
+
+  const ROCK_VARIANTS = 8;
+  const ROCK_CAP = 900;   // 每个变体的实例容量
+  const rockMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff, roughness: 0.94, metalness: 0.0,
   });
-  const gravelCount = hi ? 620 : 260;
-  const gravel = new THREE.InstancedMesh(gravelGeo, gravelMat, gravelCount);
-  gravel.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  gravel.frustumCulled = false;
-  group.add(gravel);
+  // 与地面同一套 Hapke：否则石块比月壤暗 3 倍，怎么看都是一团黑剪影
+  applyHapke(rockMat, false, 4.2);
+
+  const rockMeshes = [];
+  for (let v = 0; v < ROCK_VARIANTS; v++) {
+    const m = new THREE.InstancedMesh(makeRockGeometry(1103 + v * 97), rockMat, ROCK_CAP);
+    m.castShadow = true;
+    // 不接收阴影：84 m 的阴影图对 10 cm 的碎块仍然太粗，自阴影会把它压成黑块。
+    // 石块自己的明暗交给 Hapke 直射光——照片里就是一面亮、一面全黑。
+    m.receiveShadow = false;
+    m.frustumCulled = false;
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    rockMeshes.push(m);
+    group.add(m);
+  }
 
   const dummy = new THREE.Object3D();
+  const tmpColor = new THREE.Color();
+  const slot = new Array(ROCK_VARIANTS).fill(0);
+
+  /** 低频噪声决定石块成簇还是稀疏。月面碎石从来不是均匀撒开的，坑缘和山麓才密集 */
+  function rockDensity(x, z) {
+    const big = fbm(x / 27, z / 27, 3, 811);
+    const fine = fbm(x / 6.5, z / 6.5, 2, 823);
+    return Math.min(1, 0.16 + 1.30 * Math.abs(big) + 0.50 * Math.abs(fine));
+  }
+
+  /** 幂律粒径采样：N(>D) ∝ D^-2.1，与月面岩石计数一致（小碎屑远多于大块） */
+  function powerSize(u, smin, smax) {
+    const k = 2.1;
+    const umax = 1 - Math.pow(smin / smax, k);
+    return smin * Math.pow(1 - u * umax, -1 / k);
+  }
+
+  function pushRock(i, x, z, s, sink) {
+    const v = i % ROCK_VARIANTS;
+    const m = rockMeshes[v];
+    if (slot[v] >= ROCK_CAP) return;
+    const k = slot[v]++;
+    dummy.position.set(x, heightAt(x, z) - sink, z);
+    // 只绕 Y 自由旋转，倾角压到 ±4°：倾角一大，压平的底面就翘起来，影子又脱开
+    dummy.rotation.set(
+      (rnd(i, 61) - 0.5) * 0.14,
+      rnd(i, 62) * TAU,
+      (rnd(i, 63) - 0.5) * 0.14,
+    );
+    dummy.scale.set(s, s, s);
+    dummy.updateMatrix();
+    m.setMatrixAt(k, dummy.matrix);
+
+    // 反照率分档：多数中灰，约 14% 是浅色角砾岩（照片里那些发白的大块），少量偏暗
+    const t = rnd(i, 64);
+    const gain = t < 0.14 ? 1.55 : (t < 0.30 ? 0.62 : 0.92 + 0.20 * rnd(i, 65));
+    tmpColor.setRGB(0.205 * gain, 0.198 * gain, 0.185 * gain);
+    m.setColorAt(k, tmpColor);
+  }
 
   function placeRocks(cx, cz) {
-    for (let i = 0; i < rockCount; i++) {
-      const a = hash2(i, 1, 4211) * Math.PI * 2;
-      const d = Math.sqrt(hash2(i, 2, 4211)) * 120;
-      const x = cx + Math.cos(a) * d;
-      const z = cz + Math.sin(a) * d;
-      const s = 0.14 + 0.82 * Math.pow(hash2(i, 3, 4211), 3);
-      dummy.position.set(x, heightAt(x, z) + s * 0.35, z);
-      dummy.rotation.set(hash2(i, 4, 771) * 3.14, hash2(i, 5, 771) * 6.28, hash2(i, 6, 771) * 3.14);
-      dummy.scale.set(s * 1.15, s * 0.9, s * 1.05);
-      dummy.updateMatrix();
-      rocks.setMatrixAt(i, dummy.matrix);
-    }
-    rocks.instanceMatrix.needsUpdate = true;
+    for (let v = 0; v < ROCK_VARIANTS; v++) { slot[v] = 0; rockMeshes[v].count = 0; }
 
-    for (let i = 0; i < gravelCount; i++) {
-      const a = hash2(i, 11, 9137) * Math.PI * 2;
-      const d = Math.sqrt(hash2(i, 12, 9137)) * 18;
+    // 一级：16–150 cm 的块，铺到 60 m（45 m 内都有影子，更远只剩几个像素）
+    const N1 = hi ? 1400 : 500;
+    for (let placed = 0, tries = 0; placed < N1 && tries < N1 * 5; tries++) {
+      const a = rnd(tries, 21) * TAU;
+      const d = Math.sqrt(rnd(tries, 22)) * 60;
       const x = cx + Math.cos(a) * d;
       const z = cz + Math.sin(a) * d;
-      const s = 0.05 + 0.13 * Math.pow(hash2(i, 13, 9137), 2);
-      dummy.position.set(x, heightAt(x, z) + s * 0.1, z);
-      dummy.rotation.set(hash2(i, 14, 913) * 3.14, hash2(i, 15, 913) * 6.28, hash2(i, 16, 913) * 3.14);
-      dummy.scale.set(s * 1.3, s * 0.45, s * 1.1);
-      dummy.updateMatrix();
-      gravel.setMatrixAt(i, dummy.matrix);
+      if (rnd(tries, 23) > rockDensity(x, z)) continue;
+      const s = powerSize(rnd(tries, 24), 0.16, 1.5);
+      pushRock(tries, x, z, s, Math.min(0.055, s * 0.09));
+      placed++;
     }
-    gravel.instanceMatrix.needsUpdate = true;
+
+    // 二级：3.5–16 cm 的碎屑，只铺 24 m；再远就交给贴图，否则一半是亚像素噪点
+    const N2 = hi ? 3500 : 1100;
+    for (let placed = 0, tries = 0; placed < N2 && tries < N2 * 5; tries++) {
+      const id = 100000 + tries;
+      const a = rnd(id, 31) * TAU;
+      const d = Math.sqrt(rnd(id, 32)) * 24;
+      const x = cx + Math.cos(a) * d;
+      const z = cz + Math.sin(a) * d;
+      if (rnd(id, 33) > rockDensity(x, z)) continue;
+      const s = powerSize(rnd(id, 34), 0.035, 0.16);
+      pushRock(id, x, z, s, s * 0.12);
+      placed++;
+    }
+
+    // 近场保底：10 m 内按密度场随机撒的话，脚下有可能是一片空地，
+    // 而照片里无论谁站在月面上，脚边总有几块碎屑。这一圈不走密度场。
+    const N3 = hi ? 70 : 28;
+    for (let i = 0; i < N3; i++) {
+      const id = 300000 + i;
+      const a = rnd(id, 41) * TAU;
+      const d = Math.sqrt(rnd(id, 42)) * 10;
+      const x = cx + Math.cos(a) * d;
+      const z = cz + Math.sin(a) * d;
+      const s = powerSize(rnd(id, 44), 0.045, 0.30);
+      pushRock(id, x, z, s, Math.min(0.02, s * 0.08));
+    }
+
+    for (let v = 0; v < ROCK_VARIANTS; v++) {
+      const m = rockMeshes[v];
+      m.count = slot[v];
+      m.instanceMatrix.needsUpdate = true;
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    }
   }
 
   const state = { cx: 0, cz: 0 };
