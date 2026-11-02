@@ -305,9 +305,12 @@ composer.addPass(new OutputPass());
 const SUN_GLARE_SHADER = {
   uniforms: {
     tDiffuse: { value: null },
-    uSunUV: { value: new THREE.Vector2(0.5, 0.5) },
+    uSunDir: { value: new THREE.Vector3(0, 0, -1) },
+    uCamFwd: { value: new THREE.Vector3(0, 0, -1) },
+    uCamRight: { value: new THREE.Vector3(1, 0, 0) },
+    uCamUp: { value: new THREE.Vector3(0, 1, 0) },
+    uTanHalf: { value: new THREE.Vector2(1, 1) },   // tan(fovX/2), tan(fovY/2)
     uGlare: { value: 0 },
-    uAspect: { value: 1 },
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
@@ -318,28 +321,51 @@ const SUN_GLARE_SHADER = {
   `,
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse;
-    uniform vec2 uSunUV;
+    uniform vec3 uSunDir;
+    uniform vec3 uCamFwd;
+    uniform vec3 uCamRight;
+    uniform vec3 uCamUp;
+    uniform vec2 uTanHalf;
     uniform float uGlare;
-    uniform float uAspect;
     varying vec2 vUv;
+
+    const float R2D = 57.2957795;
 
     void main() {
       vec4 c = texture2D(tDiffuse, vUv);
 
       if (uGlare > 0.002) {
-        vec2 p = (vUv - uSunUV) * vec2(uAspect, 1.0);
-        float d = length(p);
+        // 每个像素还原成世界方向，再和太阳方向求夹角。
+        // 之前是拿太阳的屏幕坐标算像素距离，问题是太阳一偏出画面，
+        // 投影就发散（w→0），距离变成天文数字，眩光直接归零——
+        // 于是"太阳在视野边缘"和"太阳不存在"是同一个结果。角度不会发散。
+        vec2 ndc = vUv * 2.0 - 1.0;
+        vec3 dir = normalize(uCamFwd
+                           + uCamRight * (ndc.x * uTanHalf.x)
+                           + uCamUp    * (ndc.y * uTanHalf.y));
+        float th = acos(clamp(dot(dir, uSunDir), -1.0, 1.0)) * R2D;
 
-        float core = exp(-d * 9.0) * 1.22;          // 太阳本体附近彻底过曝
-        float halo = exp(-d * 3.0) * 0.28;           // 中层雾光，范围要收得住
-        float ang = atan(p.y, p.x);
-        // 六道光圈叶片，细而短；真实镜头是细线，不是粗光柱
-        float rays = pow(abs(cos(ang * 3.0 + 0.72)), 130.0) * exp(-d * 7.0) * 0.36;
-        vec3 add = vec3(1.0, 0.963, 0.918) * (core + halo + rays) * uGlare;
+        // 眼内散射 / 镜头雾光。Stiles–Holladay 是 1/θ²，那条尾巴掉得太快：
+        // 45° 就只剩 3%，可人眼在 45° 依然觉得晃。这里用 1/θ^1.5 把尾巴拉长，
+        // 让雾光一直铺到画面边缘，同时中心仍然迅速推白。
+        float veil = 0.62 / (1.0 + pow(th / 11.0, 1.5));
 
-        // 瞳孔收缩：直视太阳时周围明显变暗，暗处变暗才是"刺眼"的来源。
-        // 只加白不压暗，只会让整个画面更亮，反而不刺眼。
-        float dim = 1.0 - 0.22 * uGlare * exp(-d * 1.6);
+        // 太阳本体的过曝核，只在几度以内，bloom 之外再补一层
+        float core = 1.30 * exp(-th * 0.26);
+
+        // 六叶光圈星芒。太阳正对天顶时 cross((0,1,0), 太阳) 退化成零向量，
+        // normalize 会吐 NaN，整幅画面变黑——换一个参考轴就行。
+        vec3 upRef = abs(uSunDir.y) > 0.999 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+        vec3 sRight = normalize(cross(upRef, uSunDir));
+        vec3 sUp = cross(uSunDir, sRight);
+        float ang = atan(dot(dir, sUp), dot(dir, sRight));
+        float rays = pow(abs(cos(ang * 3.0 + 0.72)), 130.0) * exp(-th * 0.20) * 0.42;
+
+        vec3 add = vec3(1.0, 0.963, 0.918) * (core + veil + rays) * uGlare;
+
+        // 强光把附近压下去。范围只到 20° 左右，更远的对比损失交给上面那层雾光——
+        // 雾光是"提黑"，压暗是"压亮"，两件事的方向不一样，不能混着做。
+        float dim = 1.0 - 0.30 * uGlare * exp(-th * 0.05);
         c.rgb = c.rgb * dim + add;
       }
 
@@ -351,38 +377,72 @@ const sunGlarePass = new ShaderPass(SUN_GLARE_SHADER);
 composer.addPass(sunGlarePass);
 
 const _camDir = new THREE.Vector3();
-const _sunNDC = new THREE.Vector3();
+const _camRight = new THREE.Vector3();
+const _camUp = new THREE.Vector3();
+
+/** 把相机视场写进眩光 uniform：像素 → 世界方向需要 tan(半视场角) */
+function updateGlareFrame() {
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5);
+  sunGlarePass.material.uniforms.uTanHalf.value.set(t * camera.aspect, t);
+}
 
 /**
- * 每帧更新太阳的眩光强度与屏幕位置。
- * 同时把"背后"的太阳本体彻底关掉——sprite 的包围球有 3.4° 的半径，
- * 贴在视野边缘时会被视锥判为相交而继续绘制，投影翻转后就是一片莫名其妙的光斑。
+ * 每帧更新太阳的眩光强度与曝光收缩。
+ *
+ * 这里不再用"太阳离视轴多远"当开关，而是算真实的角距离：
+ * 人眼和镜头都不会因为太阳偏出中心就停止被晃。之前用 smoothstep(facing, .80, .97)
+ * 一刀切，等于太阳只要偏到 37° 以外就完全无视——可 16:9 下水平半视场角有 50°，
+ * 于是屏幕最边上那一圈看得见太阳、却一点眩光都没有，正好是用户说的"用视线边缘看"。
  */
 let sunVis = 0;   // 0 = 太阳在视野外或背后，1 = 正对太阳
 
+/**
+ * 角度衰减：th 从 lo 到 hi 单调递减，lo 处为 1，hi 处为 0。
+ * 不能直接写 smoothstep(th, 78, 55)——three 的实现里 x <= min 一律返回 0，
+ * 反向区间会被整体判成 0，那样太阳摆正中间反而一点眩光都没有。
+ */
+function falloff(th, lo, hi) {
+  return 1 - THREE.MathUtils.smoothstep(th, lo, hi);
+}
+
 function updateSunGlare() {
   _camDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
+  _camRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+  _camUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
   const facing = _camDir.dot(sunDir);
-  const front = facing > -0.02;
+
+  // 背后彻底关掉本体：sprite 的包围球有 3.4° 半径，贴视野边缘时会被视锥判为
+  // 相交而继续绘制，投影翻转后就是一片来路不明的光斑
+  const front = facing > -0.05;
   sunSprite.visible = front;
   sunDisc.visible = front;
 
   const u = sunGlarePass.material.uniforms;
   if (postDisabled || !front) { u.uGlare.value = 0; sunVis = 0; return; }
 
-  // 只有真的把视线转到太阳上才触发。太阳在视野边上（开场视角离轴约 32°，
-  // facing≈0.85）时不该压暗，否则玩家会觉得画面莫名其妙地发灰。
-  const vis = THREE.MathUtils.smoothstep(facing, 0.80, 0.97);
-  if (vis <= 0.002) { u.uGlare.value = 0; sunVis = 0; return; }
+  const th = Math.acos(Math.min(1, Math.max(-1, facing))) * 57.2957795;
 
-  camera.updateMatrixWorld();
-  _sunNDC.copy(sunDir).multiplyScalar(SKY_RADIUS).project(camera);
-  u.uSunUV.value.set(_sunNDC.x * 0.5 + 0.5, _sunNDC.y * 0.5 + 0.5);
-  u.uGlare.value = vis;
-  sunVis = vis;
+  u.uSunDir.value.copy(sunDir);
+  u.uCamFwd.value.copy(_camDir);
+  u.uCamRight.value.copy(_camRight);
+  u.uCamUp.value.copy(_camUp);
+
+  // 雾光开关：太阳在画面里 → 1，出了画面 4° 就基本收干净。
+  // 阈值跟着实际视场算（对角半视场），换窗口比例不会失效——
+  // 写死 55° 的话，窄窗口下太阳已经出画了却还在边缘留一团光。
+  const tanX = u.uTanHalf.value.x, tanY = u.uTanHalf.value.y;
+  const thDiag = Math.atan(Math.hypot(tanX, tanY)) * 57.2957795;
+  u.uGlare.value = falloff(th, thDiag - 4, thDiag + 5);
+
+  // 收曝光分两部分：
+  //   前一项是"盯着看"——只有视轴快对上太阳时才陡增，主导画面变暗；
+  //   后一项是"在视野里"——太阳只要还在前方就有一层底噪，不随视线转开而消失。
+  // 只有前一项＝边缘完全不刺眼；只有后一项＝开场视角平白发灰。
+  const centered = Math.pow(falloff(th, 0, 50), 1.6);
+  sunVis = 0.84 * centered + 0.16 * falloff(th, 34, 84);
 }
 
-sunGlarePass.material.uniforms.uAspect.value = innerWidth / innerHeight;
+updateGlareFrame();
 
 /* ---------------- 控制与物理 ---------------- */
 
@@ -467,7 +527,12 @@ window.__moon = {
   setFov(f) {
     camera.fov = f;
     camera.updateProjectionMatrix();
+    updateGlareFrame();
   },
+  // 观感标定用：直接读当前眩光强度与曝光，免得靠截图猜
+  get glare() { return sunGlarePass.material.uniforms.uGlare.value; },
+  get sunVis() { return sunVis; },
+  get exposure() { return renderer.toneMappingExposure; },
   faceSun,
   heightAt: terrain.heightAt,
   earthDir: earthDir.toArray(),
@@ -608,7 +673,15 @@ function animate() {
   updateSunGlare();
   // 直视太阳时的"收曝光"：这是刺眼的核心，不是靠屏幕叠加白光。
   // 真实相机/人眼对 1.3×10⁵ lux 会立刻把曝光拉下去，除了太阳，整个画面都沉下去。
-  renderer.toneMappingExposure = BASE_EXPOSURE * (1 - 0.60 * sunVis);
+  const exposure = BASE_EXPOSURE * (1 - 0.70 * sunVis);
+  renderer.toneMappingExposure = exposure;
+
+  // 太阳自身的辐射亮度是常数，曝光收缩只该作用于"周围"，不该把太阳一并压暗。
+  // 不补偿的话，曝光从 0.56 掉到 0.21，太阳也跟着掉三倍，
+  // 结果就是"盯着看"和"余光看"一样亮——比例没变，怎么都不刺眼。
+  const sunK = BASE_EXPOSURE / exposure;   // 1 → 2.63
+  sunDisc.material.color.setRGB(3.2 * sunK, 3.06 * sunK, 2.86 * sunK);
+  sunSprite.material.color.setScalar(sunK);
 
   filmPass.material.uniforms.uTime.value = clock.elapsedTime;
 
@@ -659,7 +732,7 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
   if (bloomPass.resolution) bloomPass.resolution.set(innerWidth * 0.5, innerHeight * 0.5);
-  sunGlarePass.material.uniforms.uAspect.value = innerWidth / innerHeight;
+  updateGlareFrame();
   syncFxaa();
 });
 
