@@ -351,7 +351,7 @@ const SUN_GLARE_SHADER = {
         float veil = 0.62 / (1.0 + pow(th / 11.0, 1.5));
 
         // 太阳本体的过曝核，只在几度以内，bloom 之外再补一层
-        float core = 1.30 * exp(-th * 0.26);
+        float core = 1.55 * exp(-th * 0.20);
 
         // 六叶光圈星芒。太阳正对天顶时 cross((0,1,0), 太阳) 退化成零向量，
         // normalize 会吐 NaN，整幅画面变黑——换一个参考轴就行。
