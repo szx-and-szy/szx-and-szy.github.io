@@ -34,20 +34,9 @@ export function vertexColorFor(h, x, z, out) {
   // 大尺度反照率起伏：月面从来不是均匀一片灰
   const patch = 0.95 + 0.12 * fbm(x / 130, z / 130, 3, 71) + 0.05 * fbm(x / 26, z / 26, 2, 83);
   const v = (0.52 + 0.10 * t) * patch;
-  out[0] = v * 1.02;
+  out[0] = v * 1.005;
   out[1] = v;
-  out[2] = v * 0.96;
-}
-
-/** 坡度压暗：法线越偏垂直处越接近裸露基岩，反照率低一档 */
-function applySlopeShade(g) {
-  const n = g.attributes.normal, c = g.attributes.color;
-  for (let i = 0; i < n.count; i++) {
-    const ny = Math.abs(n.getY(i));
-    const k = 1 - 0.52 * Math.pow(1 - ny, 0.75);
-    c.setXYZ(i, c.getX(i) * k, c.getY(i) * k, c.getZ(i) * k * 0.97);
-  }
-  c.needsUpdate = true;
+  out[2] = v * 0.995;
 }
 
 /**
@@ -98,7 +87,6 @@ export function buildPatch({
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
-  applySlopeShade(g);
   g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
   return g;
 }
@@ -131,7 +119,7 @@ export function buildDisc(r0, r1, nr, na, cx, cz, uvScale, yOffset, detailAt) {
       const th = (i / na) * Math.PI * 2;
       const lx = Math.cos(th) * r;
       const lz = Math.sin(th) * r;
-      return { x: cx + lx, z: cz + lz, u: lx, v: lz };
+      return { x: cx + lx, z: cz + lz, u: cx + lx, v: cz + lz };
     },
   });
 }

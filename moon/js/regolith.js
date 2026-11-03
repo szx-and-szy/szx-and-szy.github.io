@@ -68,9 +68,9 @@ export function makeRegolithTextures() {
   for (let k = 0; k < size * size; k++) {
     const l = L[k];
     const i = k * 4;
-    img.data[i] = Math.max(0, Math.min(255, l * 255 * 1.035));
+    img.data[i] = Math.max(0, Math.min(255, l * 255 * 1.012));
     img.data[i + 1] = Math.max(0, Math.min(255, l * 255 * 1.0));
-    img.data[i + 2] = Math.max(0, Math.min(255, l * 255 * 0.945));
+    img.data[i + 2] = Math.max(0, Math.min(255, l * 255 * 0.985));
     img.data[i + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);

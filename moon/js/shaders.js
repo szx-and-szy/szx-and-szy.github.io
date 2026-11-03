@@ -9,8 +9,8 @@ export const FilmShader = {
   uniforms: {
     tDiffuse: { value: null },
     uTime: { value: 0 },
-    uGrain: { value: 0.022 },
-    uVignette: { value: 0.20 },
+    uGrain: { value: 0.006 },
+    uVignette: { value: 0.07 },
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
@@ -38,10 +38,11 @@ export const FilmShader = {
       float vig = 1.0 - uVignette * dot(d, d) * 1.75;
       c.rgb *= clamp(vig, 0.0, 1.0);
 
-      // 胶片颗粒：暗部更明显（高感光底片的特性）
+      // 显示空间的微弱颗粒；随记录到的信号消失，不抬高未曝光天空。
       float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
       float g = hash(vUv * vec2(1280.0, 800.0) + fract(uTime) * 91.7) - 0.5;
-      c.rgb += g * uGrain * (1.0 - lum * 0.55);
+      c.rgb += g * uGrain * sqrt(max(lum, 0.0));
+      c.rgb = max(c.rgb, vec3(0.0));
 
       gl_FragColor = c;
     }
@@ -91,13 +92,11 @@ export const SUN_GLARE_SHADER = {
                            + uCamUp    * (ndc.y * uTanHalf.y));
         float th = acos(clamp(dot(dir, uSunDir), -1.0, 1.0)) * R2D;
 
-        // 眼内散射 / 镜头雾光。Stiles–Holladay 是 1/θ²，那条尾巴掉得太快：
-        // 45° 就只剩 3%，可人眼在 45° 依然觉得晃。这里用 1/θ^1.5 把尾巴拉长，
-        // 让雾光一直铺到画面边缘，同时中心仍然迅速推白。
-        float veil = 0.62 / (1.0 + pow(th / 11.0, 1.5));
+        // 局部镜头散射，角距离平方衰减，避免给真空天空铺雾。
+        float veil = 0.10 / (1.0 + pow(th / 0.65, 2.0));
 
         // 太阳本体的过曝核，只在几度以内，bloom 之外再补一层
-        float core = 1.55 * exp(-th * 0.20);
+        float core = 1.55 * exp(-th * 2.8);
 
         // 六叶光圈星芒。太阳正对天顶时 cross((0,1,0), 太阳) 退化成零向量，
         // normalize 会吐 NaN，整幅画面变黑——换一个参考轴就行。
@@ -105,14 +104,12 @@ export const SUN_GLARE_SHADER = {
         vec3 sRight = normalize(cross(upRef, uSunDir));
         vec3 sUp = cross(uSunDir, sRight);
         float ang = atan(dot(dir, sUp), dot(dir, sRight));
-        float rays = pow(abs(cos(ang * 3.0 + 0.72)), 130.0) * exp(-th * 0.20) * 0.42;
+        float rays = pow(abs(cos(ang * 3.0 + 0.72)), 200.0) * exp(-th * 0.60) * 0.14;
 
         vec3 add = vec3(1.0, 0.963, 0.918) * (core + veil + rays) * uGlare;
 
-        // 强光把附近压下去。范围只到 20° 左右，更远的对比损失交给上面那层雾光——
-        // 雾光是"提黑"，压暗是"压亮"，两件事的方向不一样，不能混着做。
-        float dim = 1.0 - 0.30 * uGlare * exp(-th * 0.05);
-        c.rgb = c.rgb * dim + add;
+        // 保持固定场景曝光，只叠加太阳附近的光学响应。
+        c.rgb += add;
       }
 
       gl_FragColor = c;

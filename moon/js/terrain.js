@@ -14,12 +14,15 @@ import { buildSquare, buildDisc } from './terrain-mesh.js';
 import { heightAt } from './height.js';
 import { CRATER_DETAIL } from './craters.js';
 import { fbm, hash2 } from './noise.js';
+import { elevationShadow } from './elevation.js';
 
 /* ---------------- 对外接口 ---------------- */
 
 export function createTerrain({
   quality = 'high',
   sunDir = new THREE.Vector3(0, 0.24, -1),
+  sunAngularRadius = 0.0047,
+  rockScans = [],
   start = { x: 0, z: 0 },
 } = {}) {
   const tex = makeRegolithTextures();
@@ -32,37 +35,35 @@ export function createTerrain({
     metalness: 0.0,
   });
 
-  /*
-   * 月壤不是朗伯体。这是这一版最关键的改动。
-   *
-   * 阿波罗照片里月面有个反直觉的特点：斜视远处的地面反而更亮，正对镜头的地面偏暗。
-   * 用 Lambert 永远做不出来——Lambert 只和入射角有关，和你从哪个角度看无关。
-   * 真实的月壤是强后向散射介质，NASA JPL 的月面巡视器仿真、ESA 的月壤材质项目
-   * 都改用 Hapke 模型（1981 形式）：
-   *
-   *   f_r = w/(4π) · 1/(μ0+μ) · { [1+B(g)]·P(g) + H(μ0)H(μ) − 1 }
-   *
-   *   μ0 = cos(入射角)   μ = cos(出射角)   g = 相位角
-   *   H(μ) = (1+2μ)/(1+2γμ),  γ = √(1−w)        Chandrasekhar 函数，管多次散射
-   *   P(g) = (4π/5)[ (sin g + (π−g)cos g)/π + (1−cos g)²/10 ]   单粒子相函数
-   *   B(g) = B0[1 − (tan|g|/2h)(3−e^{−h/tan|g|})(1−e^{−h/tan|g|})]   冲效应（相干后向散射）
-   *
-   * 1/(μ0+μ) 就是 Lommel-Seeliger 项，它让掠射方向变亮，正是照片里地平线一带发白的原因。
-   * 这一步不做，再怎么加贴图细节都像涂了漆的石膏。
-   */
-  const HAPKE_W = 0.32;   // 月壤单次散射反照率（Hapke 2012 综述取值）
-  const HAPKE_H = 0.06;   // 冲效应角宽参数，月壤典型值
+  // Site tile (20.5N, 30.5E), LROC WAC 566 nm, USGS ISIS calibration cube.
+  // Sato et al. 2014, doi:10.1002/2013JE004580. The regional average is not a local rock measurement.
+  const HAPKE_W = 0.19069648;
+  const HAPKE_H = 0.07088306;
+  const HAPKE_B = 0.26402950;
+  const HAPKE_C = 0.07014839;
+  const HAPKE_BS0 = 2.18679166;
   const hapkeNorm = (() => {
-    const P0 = (4 * Math.PI / 5);
-    const gam = Math.sqrt(1 - HAPKE_W);
-    const H1 = 3 / (1 + 2 * gam);
-    return Math.PI * (HAPKE_W / (4 * Math.PI)) / 2 * (2 * P0 + H1 * H1 - 1);
+    const b = HAPKE_B, c = HAPKE_C;
+    const P0 = (1 + c) / 2 * (1 - b * b) / Math.pow(1 - b, 3)
+      + (1 - c) / 2 * (1 - b * b) / Math.pow(1 + b, 3);
+    const chi = 0.7898593816657619;
+    const root = Math.sqrt(1 - HAPKE_W), r0 = (1 - root) / (1 + root);
+    const H1 = 1 / (1 - HAPKE_W * chi * (r0 + 0.5 * (1 - 2 * r0 * chi) * Math.log(1 + 1 / chi)));
+    return HAPKE_W / 8 * ((1 + HAPKE_BS0) * P0 + H1 * H1 - 1);
   })();
 
   const sunU = { value: sunDir.clone().normalize() };
   const normU = { value: hapkeNorm };
+  const regionalShadow = elevationShadow();
+  const shadowTexture = new THREE.DataTexture(
+    Uint16Array.from(regionalShadow?.data ?? [-Math.PI / 2], (v) => THREE.DataUtils.toHalfFloat(v)),
+    regionalShadow?.size ?? 1, regionalShadow?.size ?? 1, THREE.RedFormat, THREE.HalfFloatType,
+  );
+  shadowTexture.minFilter = shadowTexture.magFilter = THREE.LinearFilter;
+  shadowTexture.needsUpdate = true;
+  const shadowOffset = new THREE.Vector2(regionalShadow?.offsetX ?? 0, regionalShadow?.offsetZ ?? 0);
 
-  const detailOn = !/detail=0/.test(location.search);
+  const detailOn = new URLSearchParams(location.search).get('detail') !== '0';
   const microK = (() => { const m = location.search.match(/micro=([\d.]+)/); return m ? parseFloat(m[1]) : 1.0; })();
 
   const COMMON_GLSL = `#include <common>
@@ -71,8 +72,15 @@ uniform vec3 uSunDir;
 uniform float uHapkeNorm;
 uniform float uHapkeW;
 uniform float uHapkeH;
-uniform float uGainMax;
+uniform float uHgB;
+uniform float uHgC;
+uniform float uBs0;
 uniform float uMicroK;
+uniform sampler2D uRegionalShadow;
+uniform vec2 uRegionalOffset;
+uniform float uRegionalExtent;
+uniform float uSolarAltitude;
+uniform float uSolarRadius;
 
 float hash31(vec3 p) {
   p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));
@@ -108,38 +116,65 @@ float fbm2(vec3 p) {
 }
 
 float hapkeP(float g) {
-  float s = sin(g), c = cos(g);
-  float t = (s + (3.14159265 - g) * c) / 3.14159265;
-  return (4.0 * 3.14159265 / 5.0) * (t + (1.0 - c) * (1.0 - c) / 10.0);
+  float b = uHgB, c = uHgC, cg = cos(g);
+  return 0.5 * (1.0 + c) * (1.0 - b * b) / pow(1.0 - 2.0 * b * cg + b * b, 1.5)
+       + 0.5 * (1.0 - c) * (1.0 - b * b) / pow(1.0 + 2.0 * b * cg + b * b, 1.5);
 }
 
 float hapkeB(float g) {
-  if (g > 1.5707963) return 0.0;
-  float tg = tan(g);
-  if (tg < 1e-3) return 1.0;
-  float x = uHapkeH / tg;
-  return 1.0 - (tg / (2.0 * uHapkeH)) * (3.0 - exp(-x)) * (1.0 - exp(-x));
+  return uBs0 / (1.0 + tan(0.5 * g) / uHapkeH);
 }
 
-float hapkeHc(float mu) {
-  float gam = sqrt(max(1.0 - uHapkeW, 0.0));
-  return (1.0 + 2.0 * mu) / (1.0 + 2.0 * gam * mu);
+// USGS HapkeLROC.cpp roughness equations; measured Taurus-Littrow theta=23.65660095deg.
+// Returns (effective incidence cosine, effective emission cosine, S / original mu0).
+// Valid for mu0>0, mu>=0. cosg=dot(sun direction, direction toward viewer).
+vec3 hapkeRoughTerms(float mu0, float mu, float cosg) {
+  const float HAPKE_PI = 3.141592653589793;
+  const float tanTheta = 0.4380661963662265;
+  const float cotTheta = 2.282760021875764;
+  const float chi = 0.7898593816657619;
+  mu0 = clamp(mu0, 0.0, 1.0);
+  mu = clamp(mu, 0.0, 1.0);
+  float si = sqrt(max(0.0, 1.0 - mu0 * mu0));
+  float se = sqrt(max(0.0, 1.0 - mu * mu));
+  float zi = cotTheta * mu0 / max(si, 1e-7);
+  float ze = cotTheta * mu / max(se, 1e-7);
+  float E1i = exp(-2.0 * zi / HAPKE_PI), E2i = exp(-zi * zi / HAPKE_PI);
+  float E1e = exp(-2.0 * ze / HAPKE_PI), E2e = exp(-ze * ze / HAPKE_PI);
+  float etai = chi * (mu0 + si * tanTheta * E2i / (2.0 - E1i));
+  float etae = chi * (mu + se * tanTheta * E2e / (2.0 - E1e));
+  float cp = si * se > 1e-7 ? clamp((cosg - mu0 * mu) / (si * se), -1.0, 1.0) : 1.0;
+  float psiPI = acos(cp) / HAPKE_PI;
+  float s2 = 0.5 * (1.0 - cp);
+  float f = exp(-2.0 * sqrt((1.0 - cp) / max(1.0 + cp, 1e-7)));
+  float mu0e, mue, q;
+  if (mu0 >= mu) {
+    float den = max(1e-7, 2.0 - E1e - psiPI * E1i);
+    mu0e = chi * (mu0 + si * tanTheta * (cp * E2e + s2 * E2i) / den);
+    mue = chi * (mu + se * tanTheta * (E2e - s2 * E2i) / den);
+    q = mu0 / max(etai, 1e-7);
+  } else {
+    float den = max(1e-7, 2.0 - E1i - psiPI * E1e);
+    mu0e = chi * (mu0 + si * tanTheta * (E2i - s2 * E2e) / den);
+    mue = chi * (mu + se * tanTheta * (cp * E2i + s2 * E2e) / den);
+    q = mu / max(etae, 1e-7);
+  }
+  mu0e = max(0.0, mu0e); mue = max(0.0, mue);
+  float SoMu0 = mue * chi / max(1e-12, etai * etae * (1.0 - f + f * chi * q));
+  return vec3(mu0e, mue, SoMu0);
 }
 
-float hapkeRefl(float mu0, float mu, float g) {
-  float v = (1.0 + hapkeB(g)) * hapkeP(g) + hapkeHc(mu0) * hapkeHc(mu) - 1.0;
-  return 3.14159265 * (uHapkeW / (4.0 * 3.14159265)) / max(mu0 + mu, 1e-3) * v;
+// The official logarithmic Chandrasekhar H approximation. muEff is nonnegative.
+float hapkeH2012(float muEff, float w) {
+  if (muEff < 1e-7) return 1.0;
+  float root = sqrt(1.0 - w);
+  float r0 = (1.0 - root) / (1.0 + root);
+  return 1.0 / (1.0 - w * muEff *
+    (r0 + 0.5 * (1.0 - 2.0 * r0 * muEff) * log(1.0 + 1.0 / muEff)));
 }
 
-/*
- * 微型撞击坑：半径 0.10–0.85 m。几何网格 0.75 m 一格，这个尺度根本进不去——
- * 上一版把它们塞进 heightAt，结果坑缘只有 0.3r 宽、不到一个网格边长，
- * 采样时被直接抹平，脚下那圈「密布的微型坑」在画面上等于不存在。
- * 现在改由法线承载：掠射光下坑壁的 N·L 差别就是它显形的原因，不需要几何。
- *
- * 剖面与 craters.js 的 PROFILE 同源：深 0.19r、缘高 0.06r、缘宽 0.22r。
- * 梯度解析求导（每坑 1 次求值），比在三个位置重采样高度场便宜三分之二。
- */
+
+// 法线承载网格以下的浅碗与退化坑缘，不替代真实几何轮廓。
 vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, float cover) {
   vec2 acc = vec2(0.0);
   vec2 base = floor(p / cell);
@@ -156,12 +191,14 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
       float r = length(d);
       if (r > r0 * 2.0) continue;      // 影响半径 2r，与几何坑的 reach 一致
 
+      // 松散月壤中的小坑大多已退化：连续浅碗、低且破碎的坑缘。
       float q = r / r0;
-      float dh = q < 1.0 ? 0.38 * q : 0.0;                    // -0.19(1-q²) 的导数
-      float t = (q - 1.0) / 0.22;
-      dh += 0.06 * (-2.0 * t / 0.22) * exp(-t * t);           // 坑缘
-      if (q > 1.0) dh -= 0.06 * 0.35 / 1.1 * exp(-(q - 1.0) / 1.1);  // 溅射毯
-      acc -= (d / max(r, 0.05)) * (dh / r0);   // 法线沿 -∇h：不减这一号，坑会变成包
+      float age = 0.20 + 0.65 * hash21(id + seed + 93.2);
+      float dh = q < 1.0 ? 0.30 * age * q * (1.0 - q * q) : 0.0;
+      float t = (q - 0.93) / 0.34;
+      float rimBreak = 0.45 + 0.55 * (0.5 + 0.5 * cos(atan(d.y, d.x) * 3.0 + a * 6.2831853));
+      dh += 0.008 * age * rimBreak * (-2.0 * t / 0.34) * exp(-t * t);
+      acc += (d / max(r, 1e-5)) * dh;
     }
   }
   return acc;
@@ -210,13 +247,14 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
       vec2 g = vec2(0.0);
       float fA = 1.0 - smoothstep(7.0, 20.0, dist);
       float fB = 1.0 - smoothstep(35.0, 90.0, dist);
-      if (fA > 0.002) g += microCraterGrad(vWPos.xz, 1.30, 13.7, 0.08, 0.32, 0.58) * fA;
-      if (fB > 0.002) g += microCraterGrad(vWPos.xz, 3.60, 57.3, 0.28, 0.95, 0.64) * fB;
+      if (fA > 0.002) g += microCraterGrad(vWPos.xz, 1.30, 13.7, 0.08, 0.32, 0.38) * fA;
+      if (fB > 0.002) g += microCraterGrad(vWPos.xz, 3.60, 57.3, 0.28, 0.95, 0.24) * fB;
       g *= uMicroK;
       vec3 Nw = normalize(inverseTransformDirection(normal, viewMatrix));
-      vec3 T = normalize(cross(vec3(0.0, 1.0, 0.0), Nw) + vec3(1e-4, 0.0, 0.0));
-      vec3 B = cross(Nw, T);
-      Nw = normalize(Nw - T * g.x - B * g.y);
+      // g 是世界 x/z 梯度；投影到切平面，避免随坡面方向旋转或翻转坑壁。
+      vec3 gradW = vec3(g.x, 0.0, g.y);
+      gradW -= Nw * dot(Nw, gradW);
+      Nw = normalize(Nw - gradW);
       normal = normalize((viewMatrix * vec4(Nw, 0.0)).xyz);
     }
 
@@ -235,6 +273,21 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
       vec2 grad = (vec2(ax - a0, az - a0) * 1.1 + vec2(bx - b0, bz - b0) * 0.7) * fade;
       normal = normalize(normal + (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz);
     }
+
+    // Sub-DEM relief is statistical, not measured topography. Filter it before it becomes subpixel.
+    if (dist > 350.0) {
+      float footprint = max(length(dFdx(vWPos)), length(dFdy(vWPos)));
+      float filterK = 1.0 - smoothstep(5.0, 18.0, footprint);
+      float e = 1.5;
+      float h = fbm2(vWPos * 0.026);
+      vec2 g = vec2(fbm2((vWPos + vec3(e, 0.0, 0.0)) * 0.026) - h,
+                    fbm2((vWPos + vec3(0.0, 0.0, e)) * 0.026) - h) * (1.4 / e) * filterK;
+      vec3 nw = normalize(inverseTransformDirection(normal, viewMatrix));
+      vec3 grad = vec3(g.x, 0.0, g.y);
+      grad -= nw * dot(nw, grad);
+      normal = normalize((viewMatrix * vec4(normalize(nw - grad), 0.0)).xyz);
+    }
+
   }
 `;
 
@@ -244,7 +297,7 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
    */
   const ROCK_MAP_GLSL = `#include <map_fragment>
   {
-    // 逐面色调（由几何的 aTint 传入）
+    // 连续的矿物色调，不随三角形边界跳变。
     float d = length(vWPos - cameraPosition);
     float nearK = 1.0 - smoothstep(16.0, 46.0, d);
     // 矿物斑块只做两个低频尺度：28 cm 与 9 cm。
@@ -253,8 +306,7 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
     float n1 = fbm3(vWPos * 3.1 + 11.3);
     float n2 = fbm3(vWPos * 8.7 + 3.7);
     float k = 0.90 + 0.20 * (n1 * 0.5 + n2 * 0.5);
-    // 每个解理面自己的色调，权重在近处才拿出来（远处面数不到一个像素会闪）
-    k *= mix(1.0, 0.84 + 0.34 * vFaceTint, nearK);
+    k *= mix(1.0, 0.97 + 0.06 * vFaceTint, nearK);
     diffuseColor.rgb *= mix(1.0, k, nearK);
   }
 `;
@@ -287,21 +339,24 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
   {
     vec3 Nw = inverseTransformDirection(normal, viewMatrix);
     vec3 Vw = normalize(cameraPosition - vWPos);
-    float mu0 = max(dot(Nw, uSunDir), 1e-3);
-    float mu  = max(dot(Nw, Vw), 0.16);   // 粗糙度补偿：掠射时有效出射角不为 0
-    float g   = acos(clamp(dot(uSunDir, Vw), -1.0, 1.0));
-    float R   = hapkeRefl(mu0, mu, g);
-    // 与 Lambert 的比值。晨昏线附近 μ0→0 时会爆，但真正的爆点是钳位本身：
-    // 一旦大面积触到上限，法线再怎么变亮度都是同一个常数，地面立刻变成白纸。
-    // 所以上限放得很宽，靠 μ 的下限控制掠射增益，让整个亮度区间都保留响应。
-    float gain = clamp(R / (uHapkeNorm * mu0), 0.0, uGainMax);
+    float mu0 = max(dot(Nw, uSunDir), 1e-7);
+    float mu = max(dot(Nw, Vw), 1e-7);
+    float cosg = clamp(dot(uSunDir, Vw), -1.0, 1.0);
+    float g = acos(cosg);
+    vec3 rough = hapkeRoughTerms(mu0, mu, cosg);
+    float multiple = hapkeH2012(rough.x, uHapkeW) * hapkeH2012(rough.y, uHapkeW) - 1.0;
+    float phase = (1.0 + hapkeB(g)) * hapkeP(g);
+    float piBRDF = uHapkeW * 0.25 * rough.x / max(rough.x + rough.y, 1e-7)
+      * (phase + multiple) * rough.z;
+    // Three already supplied the irradiance cosine and local shadow visibility.
+    float gain = max(0.0, piBRDF / uHapkeNorm);
 
-    // 远距离回退到朗伯：10 km 外的山体一个四边形 500 m，几何上根本载不住粗糙度，
-    // 再按 Hapke 的掠射增益算，亮面就会一路顶到饱和，变成一张白剪纸。
-    float dist2 = length(vWPos - cameraPosition);
-    gain = mix(gain, 1.0, smoothstep(700.0, 4200.0, dist2));
-
-    reflectedLight.directDiffuse *= gain;
+    vec2 shadeUv = (vWPos.xz + uRegionalOffset) / uRegionalExtent + 0.5;
+    float horizonAngle = texture2D(uRegionalShadow, shadeUv).r;
+    float regionalVisibility = smoothstep(-uSolarRadius, uSolarRadius, uSolarAltitude - horizonAngle);
+    reflectedLight.directDiffuse *= gain * regionalVisibility;
+    reflectedLight.directSpecular = vec3(0.0);
+    reflectedLight.indirectSpecular = vec3(0.0);
   }
   vec3 totalDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;`;
 
@@ -313,30 +368,41 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
    * 而阿波罗照片里石块的受光面与月壤亮度相当（浅色角砾岩甚至更亮）。
    * 这一条不修，石头再怎么改形状也还是「贴纸」。
    */
-  function applyHapke(mat, withDetail, gainMax = 14.0) {
+  function applyHapke(mat, withDetail) {
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uSunDir = sunU;
       shader.uniforms.uHapkeNorm = normU;
       shader.uniforms.uHapkeW = { value: HAPKE_W };
       shader.uniforms.uHapkeH = { value: HAPKE_H };
-      // 石块的面比月壤陡得多，掠射时 1/(μ0+μ) 会把亮面顶到过曝。
-      // 地形用 14（保留掠射增益），石块单独压到 4.2。
-      shader.uniforms.uGainMax = { value: gainMax };
+      shader.uniforms.uHgB = { value: HAPKE_B };
+      shader.uniforms.uHgC = { value: HAPKE_C };
+      shader.uniforms.uBs0 = { value: HAPKE_BS0 };
       shader.uniforms.uMicroK = { value: microK };
+      shader.uniforms.uRegionalShadow = { value: shadowTexture };
+      shader.uniforms.uRegionalOffset = { value: shadowOffset };
+      // Endpoint DEM samples correspond to texel centres, not texture edges.
+      shader.uniforms.uRegionalExtent = { value: regionalShadow ? regionalShadow.extent * regionalShadow.size / (regionalShadow.size - 1) : 40000 };
+      shader.uniforms.uSolarAltitude = { value: regionalShadow?.sunAltitude ?? Math.asin(sunDir.y) };
+      shader.uniforms.uSolarRadius = { value: sunAngularRadius };
 
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>',
                  '#include <common>\nvarying vec3 vWPos;\n' +
                  (withDetail ? '' : 'attribute float aTint;\nvarying float vFaceTint;'))
         .replace('#include <begin_vertex>',
-                 '#include <begin_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;' +
+                 '#include <begin_vertex>\n' +
+                 '  vec4 hapkeWorldPosition = vec4(transformed, 1.0);\n' +
+                 '  #ifdef USE_INSTANCING\n' +
+                 '    hapkeWorldPosition = instanceMatrix * hapkeWorldPosition;\n' +
+                 '  #endif\n' +
+                 '  vWPos = (modelMatrix * hapkeWorldPosition).xyz;' +
                  (withDetail ? '' : '\n  vFaceTint = aTint;'));
 
       let f = shader.fragmentShader.replace('#include <common>', COMMON_GLSL);
-      if (withDetail) {
+      if (withDetail && detailOn) {
         f = f.replace('#include <map_fragment>', MAP_GLSL)
              .replace('#include <normal_fragment_maps>', NORMAL_GLSL);
-      } else {
+      } else if (!withDetail && !mat.userData.scanned) {
         // 逐面法线色调的 varying 只在石块 program 里声明
         f = f.replace('varying vec3 vWPos;', 'varying vec3 vWPos;\nvarying float vFaceTint;');
         f = f.replace('#include <map_fragment>', ROCK_MAP_GLSL)
@@ -348,7 +414,7 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
       shader.fragmentShader = f;
     };
     mat.customProgramCacheKey = () =>
-      (withDetail ? (detailOn ? 'regolith-hapke-detail' : 'regolith-hapke') : 'rock-hapke');
+      (withDetail ? (detailOn ? 'regolith-hapke-detail' : 'regolith-hapke') : mat.userData.scanned ? 'nasa-rock-hapke' : 'rock-hapke');
     return mat;
   }
 
@@ -359,19 +425,11 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
   // 中景与远景共用同一圈角度分段与同一接缝半径：
   // 接缝上两圈顶点逐一对齐，网格才是水密的。之前 mid 到 2400、far 从 2300 起，
   // 中间 100 m 重叠，粗网格的弦高误差会把远景点从近景里顶出来 => 一片白色薄板。
-  const ringAng = hi ? 256 : 140;
+  const ringAng = hi ? 512 : 256;
   const SEAM = 2400;
   const RING_Y = -0.30;   // 整体压低于方格地面，避免 110–120 m 的环带 z-fighting
 
-  /*
-   * 远盘一段 2.4–20 km、42 环。
-   *
-   * 试过把它拆成「2.4–6 km 96 环 + 6–20 km 26 环」，想让地平线附近多采到几个
-   * C 层坑（半径 24–90 m，在 2.43 km 处本该是 4–14 px 的起伏）。实测没有用：
-   * 逐列地平线高度的标准差从 1.64 px 变成 1.62 px，构建时间却多 110 ms。
-   * 原因是本机位的地平线其实在 100 m 量级的近处地形脊上，根本轮不到远盘。
-   * 所以远盘保持粗采样——它只是背景板，真正的轮廓由近场决定。
-   */
+  // 远盘加密以承载测绘山体；与中景共享角度采样和接缝半径。
 
   // LOD：小坑只在近场可见。360 m 外网格已经粗到装不下它们，采样了也是白花时间。
   // 远景接缝那一圈仍用 MID，和中景最后一圈逐点对齐，否则两片网格会裂开。
@@ -383,8 +441,8 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
   );
 
   const ground = new THREE.Mesh(buildSquare(240, groundSeg, start.x, start.z, 1 / 1.25), material);
-  const mid = new THREE.Mesh(buildDisc(110, SEAM, 62, ringAng, start.x, start.z, 1 / 6, RING_Y, midDetail(start.x, start.z)), material);
-  const far = new THREE.Mesh(buildDisc(SEAM, 20000, 42, ringAng, start.x, start.z, 1 / 6, RING_Y, farDetail(start.x, start.z)), material);
+  const mid = new THREE.Mesh(buildDisc(110, SEAM, hi ? 96 : 62, ringAng, start.x, start.z, 1 / 1.25, RING_Y, midDetail(start.x, start.z)), material);
+  const far = new THREE.Mesh(buildDisc(SEAM, 20000, hi ? 160 : 80, ringAng, start.x, start.z, 1 / 1.25, RING_Y, farDetail(start.x, start.z)), material);
 
   ground.castShadow = true;
   ground.receiveShadow = true;
@@ -400,17 +458,14 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
    * 有平坦的解理面、锐利的棱线，三轴比例不均匀（多数偏扁平），
    * 尺寸分布是连续幂律——几厘米的碎屑成片，几十厘米的块零星散布。
    *
-   * 球体加正弦扰动永远做不出这个。球面处处曲率同号，怎么扰都是一颗土豆。
-   * 这里改用凸包：随机球面点取 ConvexGeometry，面天然是平面、棱天然是锐角；
-   * 输出是非索引几何且带面法线，硬边不会被平滑掉，正是石块该有的样子。
+   * 凸包保留断裂形成的宽面，窄倒角与角点法线模拟轻微磨蚀，避免骰子状锐边。
    */
   const TAU = Math.PI * 2;
   const rnd = (a, b) => hash2(a | 0, b | 0, 9331);
 
   function makeRockGeometry(seed) {
-    // 16–25 个顶点 => 28–48 个面。11 个顶点做出来只有三四个大三角面，
-    // 近看是「三角板」而不是石头；真实碎块的可见面大约在 20–40 之间。
-    const n = 18 + Math.floor(rnd(seed, 1) * 11);
+    // 少量宽断口加细倒角，实例化后仍能控制三角形数量。
+    const n = 16 + Math.floor(rnd(seed, 1) * 8);
     const tiers = 3 + Math.floor(rnd(seed, 2) * 2);   // 3–4 档半径，制造长短不一的棱
     const tierR = [];
     for (let t = 0; t < tiers; t++) tierR.push(0.72 + 0.28 * rnd(seed, 10 + t));
@@ -461,57 +516,141 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
     // 底部压平：把最低一层顶点压到同一高度，凸包就会给出一个平底。
     // 这条直接决定「影子会不会和石头分开」——底面不平的石头只靠一两个尖点着地，
     // 本身就在视觉上飘着，影子当然贴不住。
+    minY = Math.min(...pts.map((p) => p.y));
+    maxY = Math.max(...pts.map((p) => p.y));
     const flat = minY + (maxY - minY) * 0.12;
     for (const p of pts) if (p.y < flat) p.y = minY;
+    // 至少三个支点构成接触面，倒角后也不会只剩一根悬空尖角。
+    for (const p of [...pts].sort((a, b) => a.y - b.y).slice(0, 3)) p.y = minY;
 
-    const g = new ConvexGeometry(pts);
+    const hull = new ConvexGeometry(pts);
+    const g = bevelRock(hull, 0.06 + 0.035 * rnd(seed, 7));
+    hull.dispose();
 
     /*
-     * 逐面随机色调。真实月面碎块是多晶角砾岩，每个解理面的矿物组成不同，
-     * 反照率能差出 20–30%。同一块石头上一律同一个灰，才会显得像塑料模型。
-     * ConvexGeometry 输出非索引几何（每 3 个顶点一个面），正好按三角形写值。
+     * 色调按局部位置连续变化，避免把凸包的每个三角形涂成不同颜色。
      */
     const vCount = g.attributes.position.count;
     const tints = new Float32Array(vCount);
-    for (let t = 0; t < vCount / 3; t++) {
-      const v = rnd(seed, 900 + t);
-      tints[t * 3] = tints[t * 3 + 1] = tints[t * 3 + 2] = v;
+    for (let i = 0; i < vCount; i++) {
+      const p = g.attributes.position;
+      tints[i] = 0.5 + 0.32 * fbm(p.getX(i) * 5 + seed, p.getZ(i) * 5 + p.getY(i) * 3, 2, seed);
     }
     g.setAttribute('aTint', new THREE.BufferAttribute(tints, 1));
 
     // 平移到「底面 y = 0」，摆放时 position.y 直接等于地面高度，不用再猜偏移量
     const pos = g.attributes.position;
-    for (let i = 0; i < pos.count; i++) pos.setY(i, pos.getY(i) - minY);
+    let baseY = Infinity;
+    for (let i = 0; i < pos.count; i++) baseY = Math.min(baseY, pos.getY(i));
+    for (let i = 0; i < pos.count; i++) pos.setY(i, pos.getY(i) - baseY);
     pos.needsUpdate = true;
     g.computeBoundingBox();
     g.computeBoundingSphere();
     return g;
   }
 
+  /** 保留宽阔断口，仅在棱角留一条窄磨蚀带；主面仍使用平面法线。 */
+  function bevelRock(hull, wear) {
+    const positions = [], normals = [];
+    const corners = new Map(), edges = new Map();
+    const src = hull.attributes.position;
+    const cross = new THREE.Vector3(), edge = new THREE.Vector3(), mean = new THREE.Vector3();
+    const keyFor = (p) => [p.x, p.y, p.z].map((v) => Math.round(v * 1e6)).join(',');
+    const emit = (a, b, c, na, nb, nc) => {
+      cross.subVectors(b, a).cross(edge.subVectors(c, a));
+      if (cross.lengthSq() < 1e-14) return;
+      mean.copy(na).add(nb).add(nc);
+      if (cross.dot(mean) < 0) { [b, c] = [c, b]; [nb, nc] = [nc, nb]; }
+      for (const p of [a, b, c]) positions.push(p.x, p.y, p.z);
+      for (const n of [na, nb, nc]) normals.push(n.x, n.y, n.z);
+    };
+    for (let i = 0; i < src.count; i += 3) {
+      const p = [0, 1, 2].map((j) => new THREE.Vector3().fromBufferAttribute(src, i + j));
+      const center = p[0].clone().add(p[1]).add(p[2]).multiplyScalar(1 / 3);
+      const normal = new THREE.Vector3().subVectors(p[1], p[0])
+        .cross(new THREE.Vector3().subVectors(p[2], p[0])).normalize();
+      const inset = p.map((v) => v.clone().lerp(center, wear));
+      const keys = p.map(keyFor);
+      emit(...inset, normal, normal, normal);
+      for (let j = 0; j < 3; j++) {
+        if (!corners.has(keys[j])) corners.set(keys[j], []);
+        corners.get(keys[j]).push({ p: inset[j], n: normal });
+        const k = (j + 1) % 3;
+        const ordered = keys[j] < keys[k];
+        const id = ordered ? keys[j] + '|' + keys[k] : keys[k] + '|' + keys[j];
+        if (!edges.has(id)) edges.set(id, []);
+        edges.get(id).push({ a: inset[ordered ? j : k], b: inset[ordered ? k : j], n: normal });
+      }
+    }
+    for (const faces of edges.values()) {
+      if (faces.length !== 2) continue;
+      const [a, b] = faces;
+      emit(a.a, a.b, b.b, a.n, a.n, b.n);
+      emit(a.a, b.b, b.a, a.n, b.n, b.n);
+    }
+    for (const points of corners.values()) {
+      const center = new THREE.Vector3(), normal = new THREE.Vector3();
+      for (const item of points) { center.add(item.p); normal.add(item.n); }
+      center.multiplyScalar(1 / points.length);
+      normal.normalize();
+      const ref = Math.abs(normal.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+      const u = new THREE.Vector3().crossVectors(ref, normal).normalize();
+      const v = new THREE.Vector3().crossVectors(normal, u);
+      const angle = (item) => { const d = item.p.clone().sub(center); return Math.atan2(d.dot(v), d.dot(u)); };
+      points.sort((a, b) => angle(a) - angle(b));
+      for (let i = 0; i < points.length; i++) {
+        const a = points[i], b = points[(i + 1) % points.length];
+        emit(center, a.p, b.p, normal, a.n, b.n);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    return g;
+  }
+
   const ROCK_VARIANTS = 8;
-  const ROCK_CAP = 900;   // 每个变体的实例容量
+  const ROCK_CAP = 1600;   // 留出局部高密度区域的余量，避免重建时按容量丢掉近处石块
   const rockMat = new THREE.MeshStandardMaterial({
     color: 0xffffff, roughness: 0.94, metalness: 0.0,
   });
   // 与地面同一套 Hapke：否则石块比月壤暗 3 倍，怎么看都是一团黑剪影
-  applyHapke(rockMat, false, 4.2);
+  applyHapke(rockMat, false);
 
   const rockMeshes = [];
   for (let v = 0; v < ROCK_VARIANTS; v++) {
     const m = new THREE.InstancedMesh(makeRockGeometry(1103 + v * 97), rockMat, ROCK_CAP);
     m.castShadow = true;
-    // 不接收阴影：84 m 的阴影图对 10 cm 的碎块仍然太粗，自阴影会把它压成黑块。
-    // 石块自己的明暗交给 Hapke 直射光——照片里就是一面亮、一面全黑。
-    m.receiveShadow = false;
+    m.receiveShadow = true;
     m.frustumCulled = false;
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     rockMeshes.push(m);
     group.add(m);
   }
+  const scannedSlots = rockScans.map((sample) => {
+    if (!sample) return null;
+    const make = (lod) => {
+      if (!lod) return null;
+      const mat = new THREE.MeshStandardMaterial({ map: lod.albedo, normalMap: lod.normal, roughness: 1, metalness: 0 });
+      mat.userData.scanned = true;
+      applyHapke(mat, false);
+      const mesh = new THREE.InstancedMesh(lod.geometry, mat, ROCK_CAP);
+      mesh.name = `NASA ${sample.id}`;
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      const index = rockMeshes.length;
+      rockMeshes.push(mesh);
+      group.add(mesh);
+      return index;
+    };
+    return { low: make(sample.low), high: make(sample.high) };
+  });
 
   const dummy = new THREE.Object3D();
   const tmpColor = new THREE.Color();
-  const slot = new Array(ROCK_VARIANTS).fill(0);
+  const slot = new Array(rockMeshes.length).fill(0);
+  let rocksCenter = { ...start };
 
   /** 低频噪声决定石块成簇还是稀疏。月面碎石从来不是均匀撒开的，坑缘和山麓才密集 */
   function rockDensity(x, z) {
@@ -528,7 +667,11 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
   }
 
   function pushRock(i, x, z, s, sink) {
-    const v = i % ROCK_VARIANTS;
+    const type = rnd(i, 141) < 0.05 ? 2 : rnd(i, 142) < 0.6 ? 0 : 1;
+    const scanned = s >= 0.14 ? scannedSlots[type] : null;
+    const nearby = Math.hypot(x - rocksCenter.x, z - rocksCenter.z) < 20;
+    const scanSlot = scanned ? (nearby && scanned.high !== null ? scanned.high : scanned.low) : null;
+    const v = scanSlot ?? i % ROCK_VARIANTS;
     const m = rockMeshes[v];
     if (slot[v] >= ROCK_CAP) return;
     const k = slot[v]++;
@@ -546,55 +689,51 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
     // 反照率分档：多数中灰，约 14% 是浅色角砾岩（照片里那些发白的大块），少量偏暗
     const t = rnd(i, 64);
     const gain = t < 0.14 ? 1.55 : (t < 0.30 ? 0.62 : 0.92 + 0.20 * rnd(i, 65));
-    tmpColor.setRGB(0.205 * gain, 0.198 * gain, 0.185 * gain);
+    if (scanSlot !== null) tmpColor.setScalar(0.90 + 0.20 * rnd(i, 65));
+    else tmpColor.setRGB(0.13 * gain, 0.128 * gain, 0.125 * gain);
     m.setColorAt(k, tmpColor);
   }
 
-  /**
-   * 撒一层石块：极坐标撒点 → 低频密度场筛选 → 幂律粒径。
-   * 三级石块（大块 / 碎屑 / 脚下保底）只是数量、半径、粒径与种子不同，
-   * 原来三份循环体各抄一遍，改一处漏两处。
-   */
+  /** 世界网格与哈希固定每颗石头的位置、尺寸和朝向，重建只改变外围可见范围。 */
   function scatterRocks(cx, cz, { count, idBase = 0, radius, smin, smax, sink, seed, density = true }) {
-    for (let placed = 0, tries = 0; placed < count && tries < count * 5; tries++) {
-      const id = idBase + tries;
-      const a = rnd(id, seed.angle) * TAU;
-      const d = Math.sqrt(rnd(id, seed.dist)) * radius;
-      const x = cx + Math.cos(a) * d;
-      const z = cz + Math.sin(a) * d;
-      if (density && rnd(id, seed.gate) > rockDensity(x, z)) continue;
-      const s = powerSize(rnd(id, seed.size), smin, smax);
-      pushRock(id, x, z, s, sink(s));
-      placed++;
+    const candidates = 4;
+    const cell = Math.sqrt(Math.PI * radius * radius * candidates * (density ? 0.60 : 1) / count);
+    const radius2 = radius * radius;
+    for (let iz = Math.floor((cz - radius) / cell); iz <= Math.floor((cz + radius) / cell); iz++) {
+      for (let ix = Math.floor((cx - radius) / cell); ix <= Math.floor((cx + radius) / cell); ix++) {
+        for (let k = 0; k < candidates; k++) {
+          const salt = idBase + k * 97;
+          const x = (ix + hash2(ix, iz, seed.angle + salt)) * cell;
+          const z = (iz + hash2(ix, iz, seed.dist + salt)) * cell;
+          if ((x - cx) ** 2 + (z - cz) ** 2 > radius2) continue;
+          if (density && hash2(ix, iz, seed.gate + salt) > rockDensity(x, z)) continue;
+          const id = Math.floor(hash2(ix, iz, seed.size + salt + 7411) * 4294967296);
+          const s = powerSize(hash2(ix, iz, seed.size + salt), smin, smax);
+          pushRock(id, x, z, s, sink(s));
+        }
+      }
     }
   }
 
   function placeRocks(cx, cz) {
-    for (let v = 0; v < ROCK_VARIANTS; v++) { slot[v] = 0; rockMeshes[v].count = 0; }
+    rocksCenter = { x: cx, z: cz };
+    for (let v = 0; v < rockMeshes.length; v++) { slot[v] = 0; rockMeshes[v].count = 0; }
 
-    // 一级：16–150 cm 的块，铺到 60 m（45 m 内都有影子，更远只剩几个像素）
+    // 外围留出重建余量：玩家走动时，新增石块只出现在远处。
     scatterRocks(cx, cz, {
-      count: hi ? 1400 : 500, radius: 60, smin: 0.16, smax: 1.5,
+      count: hi ? 1900 : 650, radius: 70, smin: 0.16, smax: 1.5,
       sink: (s) => Math.min(0.055, s * 0.09),
       seed: { angle: 21, dist: 22, gate: 23, size: 24 },
     });
 
     // 二级：3.5–16 cm 的碎屑，只铺 24 m；再远就交给贴图，否则一半是亚像素噪点
     scatterRocks(cx, cz, {
-      count: hi ? 3500 : 1100, idBase: 100000, radius: 24, smin: 0.035, smax: 0.16,
+      count: hi ? 4700 : 1500, idBase: 100000, radius: 28, smin: 0.035, smax: 0.16,
       sink: (s) => s * 0.12,
       seed: { angle: 31, dist: 32, gate: 33, size: 34 },
     });
 
-    // 近场保底：10 m 内按密度场随机撒的话，脚下有可能是一片空地，
-    // 而照片里无论谁站在月面上，脚边总有几块碎屑。这一圈不走密度场。
-    scatterRocks(cx, cz, {
-      count: hi ? 70 : 28, idBase: 300000, radius: 10, smin: 0.045, smax: 0.30,
-      sink: (s) => Math.min(0.02, s * 0.08), density: false,
-      seed: { angle: 41, dist: 42, size: 44 },
-    });
-
-    for (let v = 0; v < ROCK_VARIANTS; v++) {
+    for (let v = 0; v < rockMeshes.length; v++) {
       const m = rockMeshes[v];
       m.count = slot[v];
       m.instanceMatrix.needsUpdate = true;
@@ -606,15 +745,14 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
     const g = buildSquare(240, groundSeg, cx, cz, 1 / 1.25);
     ground.geometry.dispose();
     ground.geometry = g;
-    placeRocks(cx, cz);
   }
 
   /** 中景与远景一起重建：接缝上顶点必须成对，分开重建就会裂开 */
   function recenterRings(cx, cz) {
-    const gm = buildDisc(110, SEAM, 62, ringAng, cx, cz, 1 / 6, RING_Y, midDetail(cx, cz));
+    const gm = buildDisc(110, SEAM, hi ? 96 : 62, ringAng, cx, cz, 1 / 1.25, RING_Y, midDetail(cx, cz));
     mid.geometry.dispose();
     mid.geometry = gm;
-    const gf = buildDisc(SEAM, 20000, 42, ringAng, cx, cz, 1 / 6, RING_Y, farDetail(cx, cz));
+    const gf = buildDisc(SEAM, 20000, hi ? 160 : 80, ringAng, cx, cz, 1 / 1.25, RING_Y, farDetail(cx, cz));
     far.geometry.dispose();
     far.geometry = gf;
   }
@@ -622,6 +760,7 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
   placeRocks(start.x, start.z);
 
   let lastGround = { x: start.x, z: start.z }, lastRings = { x: start.x, z: start.z };
+  let lastRocks = { x: start.x, z: start.z };
 
   return {
     group,
@@ -629,6 +768,10 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
     heightAt,
     /** 每帧调用：按距离分档重建网格，保证脚下始终是高精度 */
     update(px, pz, force = false) {
+      if (force || Math.hypot(px - lastRocks.x, pz - lastRocks.z) > 6) {
+        placeRocks(px, pz);
+        lastRocks = { x: px, z: pz };
+      }
       if (force || Math.hypot(px - lastGround.x, pz - lastGround.z) > 40) {
         recenterGround(px, pz);
         lastGround = { x: px, z: pz };

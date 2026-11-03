@@ -18,18 +18,20 @@
 import { fbm } from './noise.js';
 import { cratersAt, CRATER_DETAIL } from './craters.js';
 import { massifH } from './massif.js';
+import { elevationAt, hasElevation } from './elevation.js';
 
 export function heightAt(x, z, detail = CRATER_DETAIL.NEAR) {
   let h = 0;
 
-  h += 3.8 * fbm(x / 430, z / 430, 4, 11);
+  const measured = hasElevation();
+  h += measured ? elevationAt(x, z) : 3.8 * fbm(x / 430, z / 430, 4, 11);
   h += 1.4 * fbm(x / 68, z / 68, 3, 23);
   h += 0.44 * fbm(x / 38, z / 38, 2, 131);
   h += 0.20 * fbm(x / 15, z / 15, 2, 149);
   h += 0.06 * fbm(x / 4, z / 4, 2, 61);
 
-  h += cratersAt(x, z, detail);
-  h += massifH(x, z);
+  h += cratersAt(x, z, detail, !measured);
+  if (!measured) h += massifH(x, z);
 
   return h;
 }

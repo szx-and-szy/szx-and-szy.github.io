@@ -1,0 +1,57 @@
+{
+  "product": "SLDEM2015_512_00N_30N_000_045_FLOAT",
+  "version": "V2.0",
+  "source_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/sldem2015/tiles/float_img/sldem2015_512_00n_30n_000_045_float.img",
+  "source_label_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/sldem2015/tiles/float_img/sldem2015_512_00n_30n_000_045_float.lbl",
+  "source_readme": "sldem2015_512_00n_30n_000_045_float.lbl",
+  "credits": "NASA/GSFC/MIT; JAXA/SELENE (Kaguya)",
+  "source_resolution_pixels_per_degree": 512,
+  "source_resolution_north_south_m": 59.225293797166955,
+  "source_resolution_east_west_at_center_m": 55.58580800761571,
+  "source_projection": "Simple Cylindrical, planetocentric, east-positive; Mean Earth/Polar Axis DE421",
+  "source_units": "kilometers above reference sphere1737.4km, converted to meters",
+  "reference_radius_m": 1737400.0,
+  "center_latitude_deg": 20.1908,
+  "center_longitude_east_deg": 30.7717,
+  "width": 513,
+  "height": 513,
+  "extent_m": 40000.0,
+  "spacing_m": 78.125,
+  "axes": "column increases east (+x); row increases south (+z)",
+  "first_sample_local_x_m": -20000.0,
+  "first_sample_local_z_m": -20000.0,
+  "geographic_bounds": {
+    "north": 20.85035772433616,
+    "south": 19.53124227566384,
+    "west": 30.068957674213387,
+    "east": 31.47444232578661
+  },
+  "source_sampling": "Bilinear from 512ppd source grid, pixel registered, source first pixel center lon0.5/512,lat30-0.5/512",
+  "center_elevation_m": -2627.353271484375,
+  "min_elevation_m": -2984.725341796875,
+  "max_elevation_m": -193.69955444335938,
+  "elevation_reference": "absolute files are meters above lunar sphere radius1737400m; relative file subtracts center_elevation_m",
+  "raw_f32_byte_order": "little-endian",
+  "raw_f32_layout": "row-major, 513rows513columns",
+  "valid_fraction": 1.0,
+  "central_20km_valid_fraction": 1.0,
+  "gap_fill": "none; complete source coverage",
+  "png_meters_per_value": 0.042588323603471666,
+  "png_offset_m": -2984.725341796875,
+  "png_decode": "absolute_height_m = PNG_uint16*png_meters_per_value+png_offset_m",
+  "source_rows": [
+    4684,
+    5360
+  ],
+  "source_columns": [
+    15394,
+    16115
+  ],
+  "source_download": "six multipartHTTP byte-range requests, one compact40km region",
+  "note": "This is merged LOLA/SELENE SLDEM2015, not the unavailable 5m NAC DTM; no synthetic mountain shaping.",
+  "sha256": {
+    "apollo17_sldem2015_40km_513_absolute.f32": "bce59dcd8d0263f01ae14cc0664abf70d1f5456a6458d10bdc35c4846880031f",
+    "apollo17_sldem2015_40km_513_relative.f32": "bc021d0be5de657815b2c80ef9a3bea724c73e97880eeccfa3ed61e64aa5cc76",
+    "apollo17_sldem2015_40km_513.png": "cbb79d4f822fd6012cd3bed5f08fc66884ecc219f6ae2c529bc3467bac500774"
+  }
+}
