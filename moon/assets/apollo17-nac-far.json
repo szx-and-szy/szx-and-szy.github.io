@@ -1,0 +1,268 @@
+{
+  "product": "NAC_DTM_APOLLO17",
+  "source_url": "https://pds.mcp.nasa.gov/data/store/img/lunar_reconnaissance_orbiter/pds4/lroc/lro-l-lroc-5-rdr/LROLRC_2001/DATA/SDP/NAC_DTM/APOLLO17/NAC_DTM_APOLLO17.TIF",
+  "source_native_scale_m": 5,
+  "credits": "NASA/GSFC/Arizona State University",
+  "license": "Public domain PDS-delivered data",
+  "license_url": "https://www.lroc.im-ldi.com/about/terms",
+  "width": 1025,
+  "height": 1025,
+  "extent_m": 40000.0,
+  "spacing_m": 39.0625,
+  "first_sample_local_x_m": -20000.0,
+  "first_sample_local_z_m": -20000.0,
+  "axes": "column east+x; row south+z",
+  "raw_f32_byte_order": "little-endian",
+  "raw_f32_layout": "row-major",
+  "center_latitude_deg": 20.1908,
+  "center_longitude_east_deg": 30.7717,
+  "reference_radius_m": 1737400.0,
+  "projection": "Equirectangular,planetocentric,east-positive,central_meridian180degrees,standard_parallel20degrees",
+  "source_pixel_registration": "Tiepoint is upper-left pixel corner; source centers at column+0.5,row+0.5",
+  "source_center_column": 4934.502050545352,
+  "source_center_row": 6746.959251214676,
+  "east_axis_projection_scale": 1.0012190798314964,
+  "source_rows_count": 8001,
+  "source_rows_bounds": [
+    2747,
+    10747
+  ],
+  "source_columns_bounds": [
+    929,
+    8940
+  ],
+  "sampling": "Bilinear in both axes; source row coordinates clamped to cached row2747 only for the northmost output node.",
+  "raw_nodata": "NaN; strict positive-weight source-corner validity; no filled source gaps in raw files.",
+  "valid_fraction": 0.9620930398572278,
+  "valid_samples": 1010799,
+  "total_samples": 1050625,
+  "center_nac_valid": true,
+  "center_elevation_m": -2626.984130859375,
+  "center_sldem_elevation_m": -2627.353271484375,
+  "relative_anchor_elevation_m": -2626.984130859375,
+  "relative_anchor_source": "Bilinear NAC center, bit-exact with measured near-grid center",
+  "minimum_nac_elevation_m": -2993.452392578125,
+  "maximum_nac_elevation_m": -196.51174926757812,
+  "fallback_files": {
+    "absolute": "nac_far_40km_1025_bilinear_merged_sldem_absolute.f32",
+    "relative": "nac_far_40km_1025_bilinear_merged_sldem_relative.f32",
+    "source_mask": "nac_far_40km_1025_bilinear_merged_source.png",
+    "rule": "NACvalidusesNAC;NACNoDATAusesSLDEM2015;mask255NAC,0SLDEM",
+    "sldem_product": "SLDEM2015_512_00N_30N_000_045_FLOAT",
+    "credits": "SLDEM2015:NASA/GSFC/MIT;JAXA/SELENE(Kaguya)",
+    "source_product_page": "https://pgda.gsfc.nasa.gov/products/54",
+    "source_scientific_citation": "Barker et al.,Icarus273,346-355,doi:10.1016/j.icarus.2015.07.039",
+    "source_mask_raw": "nac_far_40km_1025_bilinear_merged_source.u8"
+  },
+  "nac_minus_sldem_comparison_m": {
+    "count": 1010799,
+    "mean": 0.36714744899034546,
+    "median": 0.29595947265625,
+    "rms": 5.079475628924726,
+    "minimum": -197.235107421875,
+    "maximum": 32.059326171875,
+    "abs_p95": 10.2947998046875,
+    "abs_p99": 14.034060058593752
+  },
+  "no_physical_curvature_applied": "Heights are radial elevations above1737400m reference sphere; tangentplane renderer should apply lunar curvature separately",
+  "center_nac_minus_sldem_m": 0.369140625,
+  "sha256": {
+    "nac_far_40km_1025_bilinear_absolute.f32": "6216f3f728f2e492c43356f739ad65032ad87d49bcec56eda02582c7ef97ed54",
+    "nac_far_40km_1025_bilinear_relative.f32": "6180c82d74b5e9ab48cbd0f7fc7b6f13293f45d3557b73508a4da5e1802679f7",
+    "nac_far_40km_1025_bilinear_merged_sldem_absolute.f32": "d26dcd8f95145727d2a5c6c0fb1d7e9271ef2979e11ce143a3650dac0cb76152",
+    "nac_far_40km_1025_bilinear_merged_sldem_relative.f32": "ef06ac5e3f1f8360272e2b75e01e29f3e804c9f66ef53ce83ec72d9c636bec9f",
+    "nac_far_40km_1025_bilinear_valid.png": "f00449c26ad09a2d0e8584940063372fd877a2cce309c12629fee6c32a6f31de",
+    "nac_far_40km_1025_bilinear_merged_source.png": "f00449c26ad09a2d0e8584940063372fd877a2cce309c12629fee6c32a6f31de",
+    "nac_far_40km_1025_bilinear_merged_source.u8": "55d117c367bdfffce10da73a98d23bcdbd10d91e71c0c5e533ea704b52e7b511"
+  },
+  "source_product_version": "v1.9",
+  "source_product_creation_time": "2020-10-13T13:37:18",
+  "source_label_url": "https://pds.mcp.nasa.gov/data/store/img/lunar_reconnaissance_orbiter/pds4/lroc/lro-l-lroc-5-rdr/LROLRC_2001/DATA/SDP/NAC_DTM/APOLLO17/NAC_DTM_APOLLO17.LBL",
+  "source_documentation": [
+    "NAC_DTM_APOLLO17.LBL",
+    "NAC_DTM_APOLLO17_README.TXT"
+  ],
+  "source_reported_relative_precision_m": 2.55,
+  "source_reported_lola_tie_rms_m": 1.77,
+  "variant": "Offline full bilinear re-sampling from contiguous cached source rows",
+  "label": "nac_far_40km_1025_bilinear",
+  "cached_source_inputs": [
+    {
+      "file": "far_north_rows2747-6345.f32",
+      "bytes": 143744060,
+      "sha256": "721fb5a7a5961fcbed963c5dc71d0bb9d1a7ef9042cf538ba49ca8ab0f113218",
+      "first_source_row": 2747,
+      "last_source_row": 6345,
+      "columns": 9985
+    },
+    {
+      "file": "near_rows6346-7147.f32",
+      "bytes": 32031880,
+      "sha256": "aed03377b00a12e98fffac0f4f1f6cc0a94c01f151b0db3aced2e59b5f8dd4d1",
+      "first_source_row": 6346,
+      "last_source_row": 7147,
+      "columns": 9985
+    },
+    {
+      "file": "far_south_rows7148-10747.f32",
+      "bytes": 143784000,
+      "sha256": "2a6523afdfa17c4cfdd1d1eb0ce8604cdee014c412566a56323b153d2e40e291",
+      "first_source_row": 7148,
+      "last_source_row": 10747,
+      "columns": 9985
+    }
+  ],
+  "north_boundary_clamp": {
+    "output_row": 0,
+    "requested_source_row": 2746.9592512146764,
+    "sampled_source_row": 2747.0,
+    "north_south_displacement_m": 0.20374392661778984,
+    "reason": "Source row2746 was not cached. No new network access performed. The first node is clamped southward; source gaps still remain NoDATA."
+  },
+  "supersedes_for_sampling_only": "../nac_far_40km_1025.json; original files retained unchanged",
+  "comparison_report": "comparison.json",
+  "generated_utc": "2026-11-03T22:02:05Z",
+  "runtime_payload": {
+    "file": "apollo17-nac-far.f32",
+    "sha256": "d26dcd8f95145727d2a5c6c0fb1d7e9271ef2979e11ce143a3650dac0cb76152",
+    "byte_length": 4202500,
+    "value_reference": "absolute_radial_elevation_m",
+    "parts": [
+      {
+        "file": "data/apollo17-nac-far/000.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/001.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/002.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/003.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/004.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/005.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/006.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/007.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/008.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/009.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/010.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/011.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/012.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/013.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/014.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/015.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/016.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/017.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/018.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/019.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/020.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/021.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/022.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/023.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/024.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/025.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/026.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-far/027.part",
+        "byte_length": 59617
+      }
+    ],
+    "compression": "gzip",
+    "packed_byte_length": 3598561
+  },
+  "runtime_source_mask": {
+    "file": "apollo17-nac-far-mask.u8",
+    "sha256": "55d117c367bdfffce10da73a98d23bcdbd10d91e71c0c5e533ea704b52e7b511",
+    "byte_length": 1050625,
+    "width": 1025,
+    "height": 1025,
+    "values": {
+      "255": "NAC",
+      "0": "SLDEM2015 explicit gap fallback"
+    },
+    "parts": [
+      {
+        "file": "data/apollo17-nac-far-mask/000.part",
+        "byte_length": 1911
+      }
+    ],
+    "compression": "gzip",
+    "packed_byte_length": 1911
+  },
+  "runtime_finite_fraction": 1.0,
+  "runtime_description": "Absolute 40km merged runtime field,1025x1025 at39.0625m; both source axes bilinear. Valid NAC samples unchanged; only39826genuine sourceNoDATA nodes use SLDEM2015. NAC coverage96.20930398572278%; source mask preserves attribution. Northmost output row clamped south by0.203744m to cached source boundary."
+}

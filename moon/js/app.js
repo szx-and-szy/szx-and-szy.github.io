@@ -13,10 +13,13 @@ import { ShaderPass } from '../vendor/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from '../vendor/postprocessing/UnrealBloomPass.js';
 import { FXAAShader } from '../vendor/shaders/FXAAShader.js';
 import { OutputPass } from '../vendor/postprocessing/OutputPass.js';
-import { SITE, START, EYE_HEIGHT, GRAVITY, MOVE_SPEED, JUMP_SPEED, FOV, BASE_EXPOSURE, SHADOW } from './config.js';
+import { SITE, START, EYE_HEIGHT, GRAVITY, MOVE_SPEED, JUMP_SPEED, FOV, BASE_EXPOSURE } from './config.js';
 import { FilmShader, SUN_GLARE_SHADER } from './shaders.js';
 import { loadElevation, elevationInfo } from './elevation.js';
 import { loadRockScans } from './rock-scans.js';
+import { loadReflectance, measuredReflectance } from './reflectance.js';
+import { createLunarShadows } from './shadows.js';
+import { loadNormalDetail, measuredNormalDetail } from './normal-detail.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -25,6 +28,8 @@ const astro = computeScene(SITE.date, SITE);
 const [, rockScans] = await Promise.all([
   loadElevation(SITE, astro.sun.world),
   loadRockScans(matchMedia('(pointer: coarse)').matches),
+  loadReflectance(SITE),
+  loadNormalDetail(SITE, matchMedia('(pointer: coarse)').matches),
 ]);
 
 
@@ -69,26 +74,7 @@ const quality = isTouch ? 'low' : 'high';
 const sunDir = new THREE.Vector3(...astro.sun.world).normalize();
 const earthDir = new THREE.Vector3(...astro.earth.world).normalize();
 
-const sunLight = new THREE.DirectionalLight(0xfffcf7, 5.2);
-sunLight.castShadow = true;
-
-// 低太阳角会把 shadow texel 沿地面拉长，近场范围由 SHADOW 配置约束。
-const shadowSpan = SHADOW.span;
-const shadowMap = Math.min(isTouch ? SHADOW.mapLow : SHADOW.mapHigh, renderer.capabilities.maxTextureSize);
-sunLight.shadow.mapSize.set(shadowMap, shadowMap);
-sunLight.shadow.camera.left = -shadowSpan;
-sunLight.shadow.camera.right = shadowSpan;
-sunLight.shadow.camera.top = shadowSpan;
-sunLight.shadow.camera.bottom = -shadowSpan;
-// 光源位于相机外 420 m，深度范围集中在近场地形。
-sunLight.shadow.camera.near = SHADOW.near;
-sunLight.shadow.camera.far = SHADOW.far;
-sunLight.shadow.bias = SHADOW.bias;
-sunLight.shadow.normalBias = SHADOW.normalBias;
-sunLight.shadow.radius = SHADOW.radius;
-sunLight.shadow.camera.updateProjectionMatrix();
-scene.add(sunLight);
-scene.add(sunLight.target);
+const lunarShadows = createLunarShadows({ scene, camera, renderer, sunDir, quality });
 
 // 极弱的间接光近似；按白昼摄影曝光，背光面仍接近黑色。
 const earthShine = new THREE.HemisphereLight(0xb0bdcf, 0x4b4946, 0.004);
@@ -98,6 +84,7 @@ scene.add(earthShine);
 
 const terrain = createTerrain({ quality, sunDir, start: START, rockScans, sunAngularRadius: THREE.MathUtils.degToRad(astro.sun.angDiamDeg) / 2 });
 scene.add(terrain.group);
+terrain.group.traverse(o => { if (o.material) lunarShadows.setupMaterial(o.material); });
 
 /* ---------------- 天体 ---------------- */
 
@@ -341,6 +328,9 @@ function faceIntro() {
 window.__moon = {
   astro,
   get elevation() { return elevationInfo(); },
+  get reflectance() { return measuredReflectance()?.metadata ?? null; },
+  get normalDetail() { const d = measuredNormalDetail(); return d ? { metadata: d.metadata, decodedSize: d.decodedSize } : null; },
+  get shadowSettings() { return lunarShadows.settings; },
   camera,
   renderer,
   state,
@@ -493,9 +483,8 @@ function animate() {
   // 地形分档重建
   terrain.update(camera.position.x, camera.position.z);
 
-  // 太阳光跟随（阴影相机跟着人走）
-  sunLight.position.copy(camera.position).addScaledVector(sunDir, 420);
-  sunLight.target.position.copy(camera.position);
+  // Cascades keep the near shadow grid precise while covering the walking view.
+  lunarShadows.update();
   // 天体方向与视直径不应随着步行产生近景视差；放在全部地形之后。
   sunDisc.position.copy(camera.position).addScaledVector(sunDir, SKY_RADIUS);
   sunSprite.position.copy(camera.position).addScaledVector(sunDir, SKY_RADIUS * 0.999);

@@ -1,0 +1,340 @@
+{
+  "product": "NAC_DTM_APOLLO17",
+  "source_url": "https://pds.mcp.nasa.gov/data/store/img/lunar_reconnaissance_orbiter/pds4/lroc/lro-l-lroc-5-rdr/LROLRC_2001/DATA/SDP/NAC_DTM/APOLLO17/NAC_DTM_APOLLO17.TIF",
+  "credits": "NASA/GSFC/Arizona State University",
+  "width": 4096,
+  "height": 4096,
+  "extent_m": 40000.0,
+  "spacing_m": 9.765625,
+  "axes": "x east; row z south; RG encode negative height gradients (-dh/dx,-dh/dz)",
+  "encoding": "Opaque lossless WebP RG: (byte-128)*gradient_range/127; B unused. Gap gradients already tapered to zero; provenance mask stays in apollo17-nac-far-mask.u8. NoColorSpace,flipYfalse. Flat gradient is exactly byte128.",
+  "native_source_spacing_m": 5,
+  "center_latitude_deg": 20.1908,
+  "center_longitude_east_deg": 30.7717,
+  "smoothing_sigma_pixels": 1.15,
+  "smoothing_sigma_m": 11.23046875,
+  "meaning": "Gradient of smoothed native NAC elevation minus the actual39.0625m runtime cubic field. Fine measured4km area already represented by geometry is tapered tozero. No photo brightness used as height.",
+  "gap_taper_m": 29.296875,
+  "source_valid_fraction": 0.9623122215270996,
+  "reported_source_relative_precision_m": 2.55,
+  "warning": "Sampling below reported measurement precision is not new measurement accuracy; stereo correlation artefacts may remain. Normal detail cannot add silhouette geometry.",
+  "slope_degrees_percentiles": {
+    "50": 0.7827666401863098,
+    "90": 1.816118597984314,
+    "99": 3.4060146808624268,
+    "99.9": 5.784899711608887
+  },
+  "rms_slope_degrees": 1.188067078590393,
+  "max_absolute_residual_m": 11.2794189453125,
+  "near_region_max_residual_m": 0.0,
+  "sha256": "81f825e788a6d9448b5c2abb2180f5d46cf3f828184ca183a0add59332539579",
+  "bytes": 9418210,
+  "elapsed_seconds": 15.818898999976227,
+  "grid": "texel centers at -extent/2+(index+0.5)*spacing",
+  "gradient_range": 0.5,
+  "clipped_gradient_fraction": 0.0,
+  "regional_base_sha256": "d26dcd8f95145727d2a5c6c0fb1d7e9271ef2979e11ce143a3650dac0cb76152",
+  "regional_base_sampling": "Bilinear original NAC samples, absolute39.0625m grid. Only actual NoDATA gaps use original compact SLDEM bilinear samples.",
+  "north_boundary_clamp_m": 0.0,
+  "license": "Public domain PDS-delivered data",
+  "license_url": "https://www.lroc.im-ldi.com/about/terms",
+  "source_product_version": "v1.9",
+  "source_label_url": "https://pds.mcp.nasa.gov/data/store/img/lunar_reconnaissance_orbiter/pds4/lroc/lro-l-lroc-5-rdr/LROLRC_2001/DATA/SDP/NAC_DTM/APOLLO17/NAC_DTM_APOLLO17.LBL",
+  "runtime_payload": {
+    "file": "apollo17-nac-normal-detail.webp",
+    "parts": [
+      {
+        "file": "data/apollo17-nac-normal-detail/000.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/001.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/002.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/003.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/004.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/005.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/006.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/007.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/008.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/009.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/010.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/011.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/012.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/013.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/014.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/015.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/016.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/017.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/018.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/019.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/020.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/021.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/022.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/023.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/024.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/025.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/026.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/027.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/028.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/029.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/030.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/031.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/032.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/033.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/034.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/035.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/036.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/037.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/038.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/039.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/040.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/041.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/042.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/043.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/044.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/045.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/046.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/047.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/048.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/049.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/050.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/051.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/052.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/053.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/054.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/055.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/056.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/057.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/058.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/059.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/060.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/061.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/062.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/063.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/064.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/065.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/066.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/067.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/068.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/069.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/070.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-normal-detail/071.part",
+        "byte_length": 112098
+      }
+    ],
+    "compression": null,
+    "packed_byte_length": 9418210,
+    "byte_length": 9418210,
+    "sha256": "81f825e788a6d9448b5c2abb2180f5d46cf3f828184ca183a0add59332539579"
+  }
+}

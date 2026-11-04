@@ -1,0 +1,148 @@
+{
+  "product": "NAC_DTM_APOLLO17",
+  "source_url": "https://pds.mcp.nasa.gov/data/store/img/lunar_reconnaissance_orbiter/pds4/lroc/lro-l-lroc-5-rdr/LROLRC_2001/DATA/SDP/NAC_DTM/APOLLO17/NAC_DTM_APOLLO17.TIF",
+  "source_native_scale_m": 5,
+  "credits": "NASA/GSFC/Arizona State University",
+  "license": "Public domain PDS-delivered data",
+  "license_url": "https://www.lroc.im-ldi.com/about/terms",
+  "width": 801,
+  "height": 801,
+  "extent_m": 4000.0,
+  "spacing_m": 5.0,
+  "first_sample_local_x_m": -2000.0,
+  "first_sample_local_z_m": -2000.0,
+  "axes": "column east+x; row south+z",
+  "raw_f32_byte_order": "little-endian",
+  "raw_f32_layout": "row-major",
+  "center_latitude_deg": 20.1908,
+  "center_longitude_east_deg": 30.7717,
+  "reference_radius_m": 1737400.0,
+  "projection": "Equirectangular,planetocentric,east-positive,central_meridian180degrees,standard_parallel20degrees",
+  "source_pixel_registration": "Tiepoint is upper-left pixel corner; source centers at column+0.5,row+0.5",
+  "source_center_column": 4934.502050545352,
+  "source_center_row": 6746.959251214676,
+  "east_axis_projection_scale": 1.0012190798314964,
+  "source_rows_count": 802,
+  "source_rows_bounds": [
+    6346,
+    7147
+  ],
+  "source_columns_bounds": [
+    4534,
+    5335
+  ],
+  "sampling": "Bilinear in both axes",
+  "raw_nodata": "NaN; source nodata -3.40282265508890445e38 mapped toNaN; no source gaps filled in raw files",
+  "valid_fraction": 1.0,
+  "valid_samples": 641601,
+  "total_samples": 641601,
+  "center_nac_valid": true,
+  "center_elevation_m": -2626.984130859375,
+  "center_sldem_elevation_m": -2627.353271484375,
+  "relative_anchor_elevation_m": -2626.984130859375,
+  "relative_anchor_source": "NAC center",
+  "minimum_nac_elevation_m": -2725.509521484375,
+  "maximum_nac_elevation_m": -2571.98095703125,
+  "fallback_files": {
+    "absolute": "nac_near_4km_801_merged_sldem_absolute.f32",
+    "relative": "nac_near_4km_801_merged_sldem_relative.f32",
+    "source_mask": "nac_near_4km_801_merged_source.png",
+    "rule": "NACvalidusesNAC;NACNoDATAusesSLDEM2015;mask255NAC,0SLDEM",
+    "sldem_product": "SLDEM2015_512_00N_30N_000_045_FLOAT",
+    "credits": "SLDEM2015:NASA/GSFC/MIT;JAXA/SELENE(Kaguya)",
+    "source_product_page": "https://pgda.gsfc.nasa.gov/products/54",
+    "source_scientific_citation": "Barker et al.,Icarus273,346-355,doi:10.1016/j.icarus.2015.07.039"
+  },
+  "nac_minus_sldem_comparison_m": {
+    "median": 0.51318359375,
+    "mean": -0.033107560127973557,
+    "p05": -7.360595703125,
+    "p95": 5.62451171875,
+    "rmse": 3.9902594089508057
+  },
+  "no_physical_curvature_applied": "Heights are radial elevations above1737400m reference sphere; tangentplane renderer should apply lunar curvature separately",
+  "center_nac_minus_sldem_m": 0.369140625,
+  "sha256": {
+    "nac_near_4km_801_absolute.f32": "6e5913e0e4aff4071720f9f9dd184d066d9be085a57876f0e6e7d90c6163e2a4",
+    "nac_near_4km_801_relative.f32": "5aa83df93999f50e3c86dc9842756a73295ed523c9cb83d59f0fabb250dfb084",
+    "nac_near_4km_801_merged_sldem_absolute.f32": "6e5913e0e4aff4071720f9f9dd184d066d9be085a57876f0e6e7d90c6163e2a4",
+    "nac_near_4km_801_merged_sldem_relative.f32": "5aa83df93999f50e3c86dc9842756a73295ed523c9cb83d59f0fabb250dfb084"
+  },
+  "source_product_version": "v1.9",
+  "source_product_creation_time": "2020-10-13T13:37:18",
+  "source_label_url": "https://pds.mcp.nasa.gov/data/store/img/lunar_reconnaissance_orbiter/pds4/lroc/lro-l-lroc-5-rdr/LROLRC_2001/DATA/SDP/NAC_DTM/APOLLO17/NAC_DTM_APOLLO17.LBL",
+  "source_documentation": [
+    "NAC_DTM_APOLLO17.LBL",
+    "NAC_DTM_APOLLO17_README.TXT"
+  ],
+  "source_reported_relative_precision_m": 2.55,
+  "source_reported_lola_tie_rms_m": 1.77,
+  "runtime_payload": {
+    "file": "apollo17-nac-near.f32",
+    "sha256": "6e5913e0e4aff4071720f9f9dd184d066d9be085a57876f0e6e7d90c6163e2a4",
+    "byte_length": 2566404,
+    "value_reference": "absolute_radial_elevation_m",
+    "parts": [
+      {
+        "file": "data/apollo17-nac-near/000.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/001.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/002.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/003.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/004.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/005.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/006.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/007.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/008.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/009.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/010.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/011.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/012.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/apollo17-nac-near/013.part",
+        "byte_length": 92914
+      }
+    ],
+    "compression": "gzip",
+    "packed_byte_length": 1796850
+  },
+  "runtime_finite_fraction": 1.0,
+  "runtime_description": "Raw absolute NAC measured elevation, 4km square, 801x801 samples at5m spacing. All641601 samples are valid NAC data; no SLDEM fallback used."
+}

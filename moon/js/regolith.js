@@ -1,115 +1,84 @@
-/*
- * regolith.js — 程序化月壤贴图（反照率 + 法线）。
- *
- * 高度场用物理单位（毫米）生成，法线直接由 dh/dx 得出，斜率就是真实坡度。
- * 依据：Helfenstein & Shepard (1999) 用 Apollo 近距立体相机反演月壤坡面，
- * RMS 坡度 15–29° @ 0.85 mm、6–24° @ 8.5 mm；LRO Diviner 结论一致。
- * 所以这层不能做成「平滑粉尘」，那是被宇航员脚印压平之后的状态。
+/* Statistical lunar soil: quiet powder patches, embedded angular fragments and clumped aggregates.
+ * Shapes are procedural, not a site-specific scan. All relief heights below are millimetres.
  */
-
 import * as THREE from 'three';
-import { hash2, pfbm, granule } from './noise.js';
+import { hash2, pfbm, pnoise } from './noise.js';
 
-export const REGOLITH_TILE_M = 1.25;
+export const REGOLITH_TILE_M = 4;
 
-export function makeRegolithTextures() {
-  /*
-   * 粒径分布不是「细尘 + 稀疏颗粒」：80 wt% < 250 μm，但 20 wt% 粗于 1 mm、
-   * 10 wt% 粗于 2 mm——粗碎屑是连续长尾，不是零星点缀。
-   */
-  const size = 1024;
-  const MM_PER_PX = (REGOLITH_TILE_M * 1000) / size;   // 1.22 mm/px
-
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d');
-  const img = ctx.createImageData(size, size);
-
-  const H = new Float32Array(size * size);   // 高度，单位 mm
-  const L = new Float32Array(size * size);   // 反照率 0..1
-
-  for (let y = 0; y < size; y++) {
-    const v = y / size;
-    for (let x = 0; x < size; x++) {
-      const u = x / size;
-      const k = y * size + x;
-
-      // 1) 尘埃基底：亚毫米级起伏
-      let h = 0.26 * pfbm(u, v, 16, 4, 911);
-
-      // 2) 微陨石撞击的「雨点坑」，直径约 6 mm
-      h -= 0.38 * granule(u, v, 210, 1201, 0.55);
-
-      // 3) 碎屑：1–8 mm（占重量约 25%）
-      const frag1 = granule(u, v, 150, 733, 0.46);
-      const frag2 = granule(u, v, 70, 301, 0.44);
-      h += 0.55 * frag1 + 1.15 * frag2;
-
-      // 4) 土块 / 团块：1–5 cm（clods，说明月壤有弱黏聚性）
-      const clod = granule(u, v, 24, 401, 0.40);
-      h += 2.60 * clod;
-
-      // 5) 逐颗粒噪声（真实颗粒是棱角状的，不是光滑曲面）
-      h += 0.20 * (hash2(x, y, 77) - 0.5);
-
-      H[k] = h;
-
-      // 反照率：细尘中灰，碎屑与团块略亮也略暗，整体 ±10%
-      const lum = 0.50
-        + 0.055 * pfbm(u, v, 16, 4, 911)
-        + 0.075 * frag1
-        + 0.095 * frag2
-        + 0.060 * clod
-        + 0.045 * (hash2((x * 0.06) | 0, (y * 0.06) | 0, 5) - 0.5);
-      L[k] = lum;
+export function makeRegolithTextures(quality = 'high') {
+  const size = quality === 'high' ? 2048 : 1024;
+  const mmPerPixel = REGOLITH_TILE_M * 1000 / size;
+  const height = new Float32Array(size * size);
+  const tone = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const u = x / size, v = y / size, k = y * size + x;
+    // A continuous powder matrix; no evenly spaced circular pits.
+    height[k] = 0.30 * pfbm(u, v, 32, 4, 911) + 0.09 * (hash2(x, y, 77) - 0.5);
+    tone[k] = 0.50 + 0.018 * pfbm(u, v, 12, 3, 151);
+  }
+  const density = (u, v) => {
+    const patch = pnoise(u * 5, v * 5, 5, 843);
+    const t = Math.max(0, Math.min(1, (patch - 0.27) / 0.47));
+    return 0.06 + 0.94 * t * t * (3 - 2 * t);
+  };
+  const stamp = (i, seed, radiusMin, radiusMax, amplitude, presence) => {
+    const u = hash2(i, seed, 1), v = hash2(i, seed, 2);
+    if (hash2(i, seed, 3) > presence * density(u, v)) return;
+    const r = radiusMin + (radiusMax - radiusMin) * Math.pow(hash2(i, seed, 4), 2.0);
+    const rx = r * (0.65 + 0.70 * hash2(i, seed, 5)), rz = r * (0.60 + 0.75 * hash2(i, seed, 6));
+    const angle = hash2(i, seed, 7) * Math.PI * 2, ca = Math.cos(angle), sa = Math.sin(angle);
+    const phase = hash2(i, seed, 8) * Math.PI * 2;
+    const amp = r * amplitude * (0.6 + 0.7 * hash2(i, seed, 9));
+    const reach = Math.ceil(Math.max(rx, rz) * 1.3 / mmPerPixel);
+    const cx = u * size, cz = v * size;
+    const tint = (hash2(i, seed, 10) - 0.5) * 0.036;
+    for (let yy = Math.floor(cz) - reach; yy <= cz + reach; yy++) for (let xx = Math.floor(cx) - reach; xx <= cx + reach; xx++) {
+      const dx = (xx - cx) * mmPerPixel, dz = (yy - cz) * mmPerPixel;
+      const ax = (dx * ca + dz * sa) / rx, az = (-dx * sa + dz * ca) / rz;
+      const a = Math.atan2(az, ax);
+      const edge = 1 + 0.16 * Math.cos(3 * a + phase) + 0.09 * Math.cos(5 * a - phase);
+      const q = Math.hypot(ax, az) / edge;
+      if (q >= 1) continue;
+      // Broad fracture planes and irregular rims instead of identical round bumps.
+      const h = amp * Math.pow(1 - q * q, 1.35);
+      const k = ((yy + size) % size) * size + ((xx + size) % size);
+      height[k] += h;
+      tone[k] += tint * (1 - q);
     }
-  }
+  };
+  for (let i = 0; i < 130000; i++) stamp(i, 733, 1.6, 4.8, 0.30, 0.95);
+  for (let i = 0; i < 16000; i++) stamp(i, 301, 4.0, 13.0, 0.23, 0.85);
+  for (let i = 0; i < 3800; i++) stamp(i, 401, 11.0, 38.0, 0.22, 0.78);
 
-  for (let k = 0; k < size * size; k++) {
-    const l = L[k];
-    const i = k * 4;
-    img.data[i] = Math.max(0, Math.min(255, l * 255 * 1.012));
-    img.data[i + 1] = Math.max(0, Math.min(255, l * 255 * 1.0));
-    img.data[i + 2] = Math.max(0, Math.min(255, l * 255 * 0.985));
-    img.data[i + 3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-
-  const albedo = new THREE.CanvasTexture(c);
-  albedo.colorSpace = THREE.SRGBColorSpace;
-  albedo.wrapS = albedo.wrapT = THREE.RepeatWrapping;
-  albedo.anisotropy = 8;
-
-  const nc = document.createElement('canvas');
-  nc.width = nc.height = size;
-  const nctx = nc.getContext('2d');
-  const nimg = nctx.createImageData(size, size);
-  const at = (x, y) => H[((y + size) % size) * size + ((x + size) % size)];
-  const inv = 1 / (2 * MM_PER_PX);
+  const makeCanvas = () => { const c = document.createElement('canvas'); c.width = c.height = size; return c; };
+  const c = makeCanvas(), ctx = c.getContext('2d'), image = ctx.createImageData(size, size);
+  const nc = makeCanvas(), nctx = nc.getContext('2d'), normalImage = nctx.createImageData(size, size);
+  const at = (x, y) => height[((y + size) % size) * size + ((x + size) % size)];
   let sumSq = 0;
-
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      // 斜率直接用毫米除以毫米，得到的就是物理坡度
-      const gx = (at(x + 1, y) - at(x - 1, y)) * inv;
-      const gy = (at(x, y + 1) - at(x, y - 1)) * inv;
-      sumSq += gx * gx + gy * gy;
-      const nx = -gx, ny = -gy, nz = 1;
-      const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-      const i = (y * size + x) * 4;
-      nimg.data[i] = ((nx / len) * 0.5 + 0.5) * 255;
-      nimg.data[i + 1] = ((ny / len) * 0.5 + 0.5) * 255;
-      nimg.data[i + 2] = ((nz / len) * 0.5 + 0.5) * 255;
-      nimg.data[i + 3] = 255;
-    }
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const k = y * size + x, i = k * 4;
+    const l = Math.max(0.40, Math.min(0.60, tone[k]));
+    image.data[i] = l * 255 * 1.012;
+    image.data[i + 1] = l * 255;
+    image.data[i + 2] = l * 255 * 0.985;
+    image.data[i + 3] = 255;
+    const gx = (at(x + 1, y) - at(x - 1, y)) / (2 * mmPerPixel);
+    const gz = (at(x, y + 1) - at(x, y - 1)) / (2 * mmPerPixel);
+    sumSq += gx * gx + gz * gz;
+    const length = Math.hypot(gx, gz, 1);
+    normalImage.data[i] = (0.5 - gx / length * 0.5) * 255;
+    normalImage.data[i + 1] = (0.5 - gz / length * 0.5) * 255;
+    normalImage.data[i + 2] = (0.5 + 0.5 / length) * 255;
+    normalImage.data[i + 3] = 255;
   }
-  nctx.putImageData(nimg, 0, 0);
-  console.log('[regolith] RMS 坡度', (Math.atan(Math.sqrt(sumSq / (size * size))) * 180 / Math.PI).toFixed(1) + '°');
-
-  const normal = new THREE.CanvasTexture(nc);
-  normal.wrapS = normal.wrapT = THREE.RepeatWrapping;
-  normal.anisotropy = 8;
-  normal.colorSpace = THREE.NoColorSpace;
-
+  ctx.putImageData(image, 0, 0); nctx.putImageData(normalImage, 0, 0);
+  console.log('[regolith] statistical relief RMS', (Math.atan(Math.sqrt(sumSq / height.length)) * 180 / Math.PI).toFixed(1) + 'deg');
+  const albedo = new THREE.CanvasTexture(c), normal = new THREE.CanvasTexture(nc);
+  for (const texture of [albedo, normal]) {
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.anisotropy = 8;
+  }
+  albedo.colorSpace = THREE.SRGBColorSpace; normal.colorSpace = THREE.NoColorSpace;
   return { albedo, normal };
 }

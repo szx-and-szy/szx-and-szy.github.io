@@ -9,12 +9,14 @@
 
 import * as THREE from 'three';
 import { ConvexGeometry } from '../vendor/geometries/ConvexGeometry.js';
-import { makeRegolithTextures } from './regolith.js';
-import { buildSquare, buildDisc } from './terrain-mesh.js';
+import { makeRegolithTextures, REGOLITH_TILE_M } from './regolith.js';
+import { buildSquare, buildDisc, discHeightSampler } from './terrain-mesh.js';
 import { heightAt } from './height.js';
 import { CRATER_DETAIL } from './craters.js';
 import { fbm, hash2 } from './noise.js';
-import { elevationShadow } from './elevation.js';
+import { elevationShadow, elevationInfo } from './elevation.js';
+import { measuredReflectance } from './reflectance.js';
+import { measuredNormalDetail } from './normal-detail.js';
 
 /* ---------------- 对外接口 ---------------- */
 
@@ -25,7 +27,7 @@ export function createTerrain({
   rockScans = [],
   start = { x: 0, z: 0 },
 } = {}) {
-  const tex = makeRegolithTextures();
+  const tex = makeRegolithTextures(quality);
   const material = new THREE.MeshStandardMaterial({
     map: tex.albedo,
     normalMap: tex.normal,
@@ -62,9 +64,20 @@ export function createTerrain({
   shadowTexture.minFilter = shadowTexture.magFilter = THREE.LinearFilter;
   shadowTexture.needsUpdate = true;
   const shadowOffset = new THREE.Vector2(regionalShadow?.offsetX ?? 0, regionalShadow?.offsetZ ?? 0);
+  const reflectance = measuredReflectance();
+  const reflectanceTexture = new THREE.DataTexture(
+    Uint16Array.from(reflectance?.data ?? [1], v => THREE.DataUtils.toHalfFloat(v)),
+    reflectance?.metadata.width ?? 1, reflectance?.metadata.height ?? 1, THREE.RedFormat, THREE.HalfFloatType,
+  );
+  reflectanceTexture.minFilter = reflectanceTexture.magFilter = THREE.LinearFilter;
+  reflectanceTexture.needsUpdate = true;
+  const slopeSource = measuredNormalDetail();
+  const normalDetail = slopeSource?.metadata.regional_base_sha256 === elevationInfo()?.runtime_payload?.sha256
+    ? slopeSource : null;
 
   const detailOn = new URLSearchParams(location.search).get('detail') !== '0';
   const microK = (() => { const m = location.search.match(/micro=([\d.]+)/); return m ? parseFloat(m[1]) : 1.0; })();
+  const nearCenter = { value: new THREE.Vector2(start.x, start.z) };
 
   const COMMON_GLSL = `#include <common>
 varying vec3 vWPos;
@@ -81,6 +94,16 @@ uniform vec2 uRegionalOffset;
 uniform float uRegionalExtent;
 uniform float uSolarAltitude;
 uniform float uSolarRadius;
+uniform sampler2D uMeasuredReflectance;
+uniform float uReflectanceExtent;
+uniform vec2 uReflectanceOffset;
+uniform bool uHasReflectance;
+uniform sampler2D uMeasuredNormalDetail;
+uniform vec2 uNormalDetailOffset;
+uniform float uNormalDetailExtent;
+uniform float uNormalDetailRange;
+uniform bool uHasMeasuredNormal;
+uniform float uNormalDetailGain;
 
 float hash31(vec3 p) {
   p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));
@@ -92,6 +115,22 @@ float hash21(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
   p += dot(p, p + 45.32);
   return fract(p.x * p.y);
+}
+
+// Shared corner offsets give continuous, world-anchored material patches.
+// Explicit gradients avoid hash-boundary mip stripes. Offset-only sampling preserves normal orientation.
+vec4 soilTexture(sampler2D tex, vec2 uv) {
+  vec2 p = vWPos.xz / 3.7;
+  vec2 cell = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  f = pow(f, vec2(3.0)) / (pow(f, vec2(3.0)) + pow(1.0 - f, vec2(3.0)));
+  vec2 dx = dFdx(uv), dy = dFdy(uv);
+  vec2 a = vec2(hash21(cell), hash21(cell + 17.1)) * 13.7;
+  vec2 b = vec2(hash21(cell + vec2(1.0, 0.0)), hash21(cell + vec2(1.0, 0.0) + 17.1)) * 13.7;
+  vec2 c = vec2(hash21(cell + vec2(0.0, 1.0)), hash21(cell + vec2(0.0, 1.0) + 17.1)) * 13.7;
+  vec2 d = vec2(hash21(cell + vec2(1.0, 1.0)), hash21(cell + vec2(1.0, 1.0) + 17.1)) * 13.7;
+  return mix(mix(textureGrad(tex, uv + a, dx, dy), textureGrad(tex, uv + b, dx, dy), f.x),
+             mix(textureGrad(tex, uv + c, dx, dy), textureGrad(tex, uv + d, dx, dy), f.x), f.y);
 }
 
 float vnoise3(vec3 x) {
@@ -212,8 +251,13 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
     diffuseColor.rgb *= 0.93 + 0.14 * macro;
 
     // 800 m 尺度的大块明暗：远山全靠它才有层次，否则是一整片同色
-    float macroFar = vnoise3(vWPos * 0.0013) * 0.6 + vnoise3(vWPos * 0.0034) * 0.4;
-    diffuseColor.rgb *= 0.80 + 0.40 * macroFar;
+    if (uHasReflectance) {
+      vec2 ruv = (vWPos.xz + uReflectanceOffset) / uReflectanceExtent + 0.5;
+      diffuseColor.rgb *= texture2D(uMeasuredReflectance, ruv).r;
+    } else {
+      float macroFar = vnoise3(vWPos * 0.0013) * 0.6 + vnoise3(vWPos * 0.0034) * 0.4;
+      diffuseColor.rgb *= 0.80 + 0.40 * macroFar;
+    }
 
     if (dist < 80.0) {
       // 近场细砂：3 cm 与 1.4 cm 两层，只有走到跟前才起作用
@@ -261,7 +305,7 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
     // 中景：只在网格粗到装不下 30 m 以下坡面时补一点。
     // 这一层原来是给「平坦地面」打掩护的，强度给到 2.6/1.5，把真实起伏都盖住了；
     // 现在几何本身有 15–38 m 的丘，假法线必须让位，只保留远处的微弱补充。
-    if (dist > 8.0 && dist < 700.0) {
+    if (!uHasMeasuredNormal && dist > 8.0 && dist < 700.0) {
       float fade = smoothstep(20.0, 60.0, dist) * (1.0 - smoothstep(300.0, 700.0, dist));
       float e1 = 1.1, e2 = 0.28;
       float a0 = fbm2(vWPos * 0.034);
@@ -275,7 +319,7 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
     }
 
     // Sub-DEM relief is statistical, not measured topography. Filter it before it becomes subpixel.
-    if (dist > 350.0) {
+    if (!uHasMeasuredNormal && dist > 350.0) {
       float footprint = max(length(dFdx(vWPos)), length(dFdy(vWPos)));
       float filterK = 1.0 - smoothstep(5.0, 18.0, footprint);
       float e = 1.5;
@@ -286,6 +330,19 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
       vec3 grad = vec3(g.x, 0.0, g.y);
       grad -= nw * dot(nw, grad);
       normal = normalize((viewMatrix * vec4(normalize(nw - grad), 0.0)).xyz);
+    }
+
+    if (uHasMeasuredNormal) {
+      vec2 uv = (vWPos.xz + uNormalDetailOffset) / uNormalDetailExtent + 0.5;
+      if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
+        // RG stores negative metric height gradients, with byte128 exactly flat.
+        vec2 slope = (texture2D(uMeasuredNormalDetail, uv).rg * 255.0 - 128.0)
+          * (uNormalDetailRange / 127.0) * uNormalDetailGain;
+        vec3 nw = normalize(inverseTransformDirection(normal, viewMatrix));
+        // Combine slopes, not unit normals, so steep measured hills keep their tilt.
+        nw = normalize(vec3(nw.x + slope.x * nw.y, nw.y, nw.z + slope.y * nw.y));
+        normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz);
+      }
     }
 
   }
@@ -360,14 +417,8 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
   }
   vec3 totalDiffuse = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse;`;
 
-  /**
-   * 把 Hapke 反射率注入任意 MeshStandardMaterial。
-   *
-   * 石块必须和地面用同一套模型。地面按 Hapke 算出来比 Lambert 亮 2–4 倍，
-   * 石块若还用 Lambert，亮面只有地面的三分之一亮度，整块石头就成了一团纯黑剪影——
-   * 而阿波罗照片里石块的受光面与月壤亮度相当（浅色角砾岩甚至更亮）。
-   * 这一条不修，石头再怎么改形状也还是「贴纸」。
-   */
+  // Regional powder photometry is shared here; scanned rock textures retain their own contrast.
+  // This is not a separate laboratory photometric fit for every returned rock sample.
   function applyHapke(mat, withDetail) {
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uSunDir = sunU;
@@ -384,11 +435,23 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
       shader.uniforms.uRegionalExtent = { value: regionalShadow ? regionalShadow.extent * regionalShadow.size / (regionalShadow.size - 1) : 40000 };
       shader.uniforms.uSolarAltitude = { value: regionalShadow?.sunAltitude ?? Math.asin(sunDir.y) };
       shader.uniforms.uSolarRadius = { value: sunAngularRadius };
+      shader.uniforms.uMeasuredReflectance = { value: reflectanceTexture };
+      shader.uniforms.uHasReflectance = { value: !!reflectance };
+      shader.uniforms.uReflectanceExtent = { value: reflectance ? reflectance.metadata.extent_m * reflectance.metadata.width / (reflectance.metadata.width - 1) : 40000 };
+      shader.uniforms.uReflectanceOffset = { value: new THREE.Vector2(reflectance?.offsetX ?? 0, reflectance?.offsetZ ?? 0) };
+      shader.uniforms.uMeasuredNormalDetail = { value: normalDetail?.texture ?? tex.normal };
+      shader.uniforms.uHasMeasuredNormal = { value: !!normalDetail };
+      shader.uniforms.uNormalDetailExtent = { value: normalDetail?.metadata.extent_m ?? 40000 };
+      shader.uniforms.uNormalDetailOffset = { value: new THREE.Vector2(normalDetail?.offsetX ?? 0, normalDetail?.offsetZ ?? 0) };
+      shader.uniforms.uNormalDetailRange = { value: normalDetail?.metadata.gradient_range ?? 0.5 };
+      shader.uniforms.uNormalDetailGain = { value: 1 };
+      mat.userData.hapkeUniforms = shader.uniforms;
+      if (withDetail) shader.uniforms.uNearCenter = nearCenter;
 
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>',
                  '#include <common>\nvarying vec3 vWPos;\n' +
-                 (withDetail ? '' : 'attribute float aTint;\nvarying float vFaceTint;'))
+                 (withDetail ? 'attribute float aRegional;\nvarying float vRegional;' : 'attribute float aTint;\nvarying float vFaceTint;'))
         .replace('#include <begin_vertex>',
                  '#include <begin_vertex>\n' +
                  '  vec4 hapkeWorldPosition = vec4(transformed, 1.0);\n' +
@@ -396,12 +459,16 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
                  '    hapkeWorldPosition = instanceMatrix * hapkeWorldPosition;\n' +
                  '  #endif\n' +
                  '  vWPos = (modelMatrix * hapkeWorldPosition).xyz;' +
-                 (withDetail ? '' : '\n  vFaceTint = aTint;'));
+                 (withDetail ? '\n  vRegional = aRegional;' : '\n  vFaceTint = aTint;'));
 
       let f = shader.fragmentShader.replace('#include <common>', COMMON_GLSL);
-      if (withDetail && detailOn) {
-        f = f.replace('#include <map_fragment>', MAP_GLSL)
-             .replace('#include <normal_fragment_maps>', NORMAL_GLSL);
+      if (withDetail) {
+        f = f.replace('varying vec3 vWPos;', 'varying vec3 vWPos;\nvarying float vRegional;\nuniform vec2 uNearCenter;')
+             .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+  // A narrow overlap covers the sub-edge height differences between triangulations.
+  if (vRegional > 0.5 && max(abs(vWPos.x - uNearCenter.x), abs(vWPos.z - uNearCenter.y)) < 118.0) discard;`);
+        f = f.replace('#include <map_fragment>', MAP_GLSL.replace('#include <map_fragment>', THREE.ShaderChunk.map_fragment.replace('texture2D( map, vMapUv )', 'soilTexture( map, vMapUv )')))
+             .replace('#include <normal_fragment_maps>', (detailOn ? NORMAL_GLSL : '#include <normal_fragment_maps>').replace('#include <normal_fragment_maps>', THREE.ShaderChunk.normal_fragment_maps.replaceAll('texture2D( normalMap, vNormalMapUv )', 'soilTexture( normalMap, vNormalMapUv )')));
       } else if (!withDetail && !mat.userData.scanned) {
         // 逐面法线色调的 varying 只在石块 program 里声明
         f = f.replace('varying vec3 vWPos;', 'varying vec3 vWPos;\nvarying float vFaceTint;');
@@ -425,9 +492,8 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
   // 中景与远景共用同一圈角度分段与同一接缝半径：
   // 接缝上两圈顶点逐一对齐，网格才是水密的。之前 mid 到 2400、far 从 2300 起，
   // 中间 100 m 重叠，粗网格的弦高误差会把远景点从近景里顶出来 => 一片白色薄板。
-  const ringAng = hi ? 512 : 256;
+  const ringAng = hi ? 1024 : 512;
   const SEAM = 2400;
-  const RING_Y = -0.30;   // 整体压低于方格地面，避免 110–120 m 的环带 z-fighting
 
   // 远盘加密以承载测绘山体；与中景共享角度采样和接缝半径。
 
@@ -440,9 +506,20 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
     Math.hypot(x - cx, z - cz) < SEAM + 1 ? CRATER_DETAIL.MID : CRATER_DETAIL.FAR
   );
 
-  const ground = new THREE.Mesh(buildSquare(240, groundSeg, start.x, start.z, 1 / 1.25), material);
-  const mid = new THREE.Mesh(buildDisc(110, SEAM, hi ? 96 : 62, ringAng, start.x, start.z, 1 / 1.25, RING_Y, midDetail(start.x, start.z)), material);
-  const far = new THREE.Mesh(buildDisc(SEAM, 20000, hi ? 160 : 80, ringAng, start.x, start.z, 1 / 1.25, RING_Y, farDetail(start.x, start.z)), material);
+  // Regional geometry stays anchored to the landing site. A complete mid disc
+  // remains underneath the moving square, so walking cannot expose a centre hole.
+  const midLayout = { r0: 0, r1: SEAM, nr: hi ? 384 : 160, na: ringAng, cx: start.x, cz: start.z, radialMode: 'linear' };
+  const farLayout = { r0: SEAM, r1: 20000, nr: hi ? 320 : 160, na: ringAng, cx: start.x, cz: start.z, radialMode: 'log' };
+  const mid = new THREE.Mesh(buildDisc(0, SEAM, midLayout.nr, ringAng, start.x, start.z, 1 / REGOLITH_TILE_M, 0, midDetail(start.x, start.z), 'linear'), material);
+  const far = new THREE.Mesh(buildDisc(SEAM, 20000, farLayout.nr, ringAng, start.x, start.z, 1 / REGOLITH_TILE_M, 0, farDetail(start.x, start.z)), material);
+  const midHeightAt = discHeightSampler(mid.geometry, midLayout);
+  const farHeightAt = discHeightSampler(far.geometry, farLayout);
+  const regionalHeightAt = (x, z) => {
+    const h = midHeightAt(x, z);
+    return Number.isFinite(h) ? h : farHeightAt(x, z);
+  };
+  const ground = new THREE.Mesh(buildSquare(240, groundSeg, start.x, start.z, 1 / REGOLITH_TILE_M, undefined, { edgeHeightAt: regionalHeightAt }), material);
+  ground.name = 'Moving near terrain'; mid.name = 'Static regional terrain'; far.name = 'Static distant terrain';
 
   ground.castShadow = true;
   ground.receiveShadow = true;
@@ -634,7 +711,7 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
       const mat = new THREE.MeshStandardMaterial({ map: lod.albedo, normalMap: lod.normal, roughness: 1, metalness: 0 });
       mat.userData.scanned = true;
       applyHapke(mat, false);
-      const mesh = new THREE.InstancedMesh(lod.geometry, mat, ROCK_CAP);
+      const mesh = new THREE.InstancedMesh(lod.geometry, mat, 8000);
       mesh.name = `NASA ${sample.id}`;
       mesh.castShadow = mesh.receiveShadow = true;
       mesh.frustumCulled = false;
@@ -668,12 +745,13 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
 
   function pushRock(i, x, z, s, sink) {
     const type = rnd(i, 141) < 0.05 ? 2 : rnd(i, 142) < 0.6 ? 0 : 1;
-    const scanned = s >= 0.14 ? scannedSlots[type] : null;
-    const nearby = Math.hypot(x - rocksCenter.x, z - rocksCenter.z) < 20;
+    const scanned = scannedSlots[type];
+    const rockDistance = Math.hypot(x - rocksCenter.x, z - rocksCenter.z);
+    const nearby = rockDistance < 20 && s / Math.max(1.7, rockDistance) > 0.018;
     const scanSlot = scanned ? (nearby && scanned.high !== null ? scanned.high : scanned.low) : null;
     const v = scanSlot ?? i % ROCK_VARIANTS;
     const m = rockMeshes[v];
-    if (slot[v] >= ROCK_CAP) return;
+    if (slot[v] >= m.instanceMatrix.count) return;
     const k = slot[v]++;
     dummy.position.set(x, heightAt(x, z) - sink, z);
     // 只绕 Y 自由旋转，倾角压到 ±4°：倾角一大，压平的底面就翘起来，影子又脱开
@@ -742,30 +820,20 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
   }
 
   function recenterGround(cx, cz) {
-    const g = buildSquare(240, groundSeg, cx, cz, 1 / 1.25);
-    ground.geometry.dispose();
-    ground.geometry = g;
-  }
-
-  /** 中景与远景一起重建：接缝上顶点必须成对，分开重建就会裂开 */
-  function recenterRings(cx, cz) {
-    const gm = buildDisc(110, SEAM, hi ? 96 : 62, ringAng, cx, cz, 1 / 1.25, RING_Y, midDetail(cx, cz));
-    mid.geometry.dispose();
-    mid.geometry = gm;
-    const gf = buildDisc(SEAM, 20000, hi ? 160 : 80, ringAng, cx, cz, 1 / 1.25, RING_Y, farDetail(cx, cz));
-    far.geometry.dispose();
-    far.geometry = gf;
+    buildSquare(240, groundSeg, cx, cz, 1 / REGOLITH_TILE_M, undefined, { edgeHeightAt: regionalHeightAt, geometry: ground.geometry });
+    nearCenter.value.set(cx, cz);
   }
 
   placeRocks(start.x, start.z);
 
-  let lastGround = { x: start.x, z: start.z }, lastRings = { x: start.x, z: start.z };
+  let lastGround = { x: start.x, z: start.z };
   let lastRocks = { x: start.x, z: start.z };
 
   return {
     group,
     materials: material,
     heightAt,
+    regionalHeightAt,
     /** 每帧调用：按距离分档重建网格，保证脚下始终是高精度 */
     update(px, pz, force = false) {
       if (force || Math.hypot(px - lastRocks.x, pz - lastRocks.z) > 6) {
@@ -775,10 +843,6 @@ vec2 microCraterGrad(vec2 p, float cell, float seed, float rMin, float rMax, flo
       if (force || Math.hypot(px - lastGround.x, pz - lastGround.z) > 40) {
         recenterGround(px, pz);
         lastGround = { x: px, z: pz };
-      }
-      if (force || Math.hypot(px - lastRings.x, pz - lastRings.z) > 70) {
-        recenterRings(px, pz);
-        lastRings = { x: px, z: pz };
       }
     },
   };

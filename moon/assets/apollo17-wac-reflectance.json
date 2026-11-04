@@ -1,0 +1,52 @@
+{
+  "product": "WAC_HAPKE_566NM_E350N0450",
+  "source_url": "https://pds.mcp.nasa.gov/data/store/img/lunar_reconnaissance_orbiter/pds4/lroc/lro-l-lroc-5-rdr/LROLRC_2001/DATA/MDR/WAC_HAPKE/WAC_HAPKE_566NM_E350N0450.IMG",
+  "source_product_page": "https://data.lroc.im-ldi.com/lroc/view_rdr_product/WAC_HAPKE_566NM_E350N0450",
+  "credits": "NASA/GSFC/Arizona State University",
+  "scientific_citation": "Sato et al. 2017, WAC Hapke-normalized mosaic",
+  "source_native_scale_m": 398.991452949,
+  "source_version": "v1.2",
+  "normalization_geometry_deg": {
+    "incidence": 60,
+    "phase": 60,
+    "emission": 0
+  },
+  "value": "radiance factor I/F normalized to fixed geometry; used only as relative material modulation, not a calibrated single-scattering-albedo map",
+  "width": 129,
+  "height": 129,
+  "extent_m": 40000,
+  "spacing_m": 312.5,
+  "center_latitude_deg": 20.1908,
+  "center_longitude_east_deg": 30.7717,
+  "first_sample_local_x_m": -20000.0,
+  "first_sample_local_z_m": -20000.0,
+  "axes": "column east +x, row south +z",
+  "pixel_registration": "PDS pixel-center offsets, zero-based sample=lon*76-0.5, line=5320.5-lat*76",
+  "reference_if": 0.019095353521492983,
+  "reference_definition": "Median central3x3 output samples",
+  "valid_fraction": 1.0,
+  "minimum_if": 0.013770043378484052,
+  "maximum_if": 0.05657002533863126,
+  "relative_percentiles": {
+    "0": 0.7211201072022589,
+    "5": 0.8937497450463049,
+    "50": 1.3836336261590216,
+    "95": 2.1929909106923384,
+    "100": 2.96250212256915
+  },
+  "source_rows": [
+    3733,
+    3839
+  ],
+  "source_columns": [
+    2284,
+    2392
+  ],
+  "source_data_offset_bytes": 27360,
+  "runtime_payload": {
+    "file": "apollo17-wac-reflectance.f32",
+    "bytes": 66564,
+    "sha256": "b1d3b6cad740d756b1c4e531d439e081cdf43c34b98a086176c5f48032cb91d0"
+  },
+  "source_band_sha256": "8e9f36c87bc6123efb1d24d1456a0384ff4b6447d849aca73ffdeac094890f39"
+}
