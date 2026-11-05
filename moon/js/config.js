@@ -19,7 +19,7 @@ export const MOVE_SPEED = 2.6;
 export const JUMP_SPEED = 1.9;   // 起跳速度 => 跳高约 1.1 m，滞空约 2.3 s
 
 export const FOV = 52;
-export const BASE_EXPOSURE = 10.0;    // 固定胶片曝光；与保留入射余弦的月壤反射共同标定
+export const BASE_EXPOSURE = 6.6;    // 固定显示曝光；按同向阿波罗参考收敛亮度，不是相机EV
 
 /*
  * 平行光跟着相机走，所以 near/far 是「相机到光源的距离 ± 地面起伏」。

@@ -32,7 +32,9 @@
     "software": "Blender5.2.2 LTS, quadric edge collapse; Cycles CUDA tangent normal bake.",
     "uvs": "Original NASA UV atlas retained through decimation; corner UVs packed with smooth vertex normals.",
     "albedo": "1024px photographic approximation with conservatively bounded normal-correlated laboratory lighting removal; not radiometric calibration.",
-    "shapeVerification": "Sampled bidirectional nearest-triangle BVH distances; recorded perLOD, not a continuous Hausdorff bound."
+    "shapeVerification": "Sampled bidirectional nearest-triangle BVH distances; recorded perLOD, not a continuous Hausdorff bound.",
+    "nearDetail": "Blender5.2.2 LTS decimate to8000tri; normalize longestaxis1/bottomY0; bake Cycles CPU source-to-new-target tangent normal1024; losslessRGBAWebP and byte-exact payload splitting.",
+    "nearSelection": "Desktop only: last scatter centre distance<12m and longestAxis/max(1.7m,distance)>0.055. Existing middle high/low remain. Statistical placement, not field reconstruction."
   },
   "samples": [
     {
@@ -166,6 +168,56 @@
             },
             "units": "fraction of original longest axis (normalized coordinates)",
             "method": "Triangle-centroid samples against exact BVH nearest triangle surface; not a continuous Hausdorff bound."
+          }
+        },
+        "near": {
+          "geometry": "70017-8-near.json",
+          "normalMap": "70017-8-near-normal.webp",
+          "normalMapDescriptorField": "normalTexture",
+          "triangles": 7998,
+          "packedVertices": 4883,
+          "geometryBytes": 223776,
+          "normalMapBytes": 950322,
+          "shapeError": {
+            "sourceToLOD": {
+              "sampleCount": 11081,
+              "rms": 0.0011890098691787262,
+              "p95": 0.0022322111763060093,
+              "maximum": 0.005859615746885538
+            },
+            "lodToSource": {
+              "sampleCount": 7998,
+              "rms": 0.001261046880762917,
+              "p95": 0.002410245058126747,
+              "maximum": 0.004552811849862337
+            },
+            "units": "fraction of original longest axis (normalized coordinates)",
+            "method": "Triangle-centroid samples against exact BVH nearest triangle surface; not a continuous Hausdorff bound."
+          },
+          "lodRenormalization": {
+            "longestAxisMeters": 0.9996780455112457,
+            "boundsMeters": {
+              "min": [
+                -0.23417289555072784,
+                0.0012244860408827662,
+                -0.5002554655075073
+              ],
+              "max": [
+                0.23545685410499573,
+                0.6491560935974121,
+                0.4994225800037384
+              ]
+            },
+            "extentMeters": [
+              0.46962974965572357,
+              0.6479316075565293,
+              0.9996780455112457
+            ],
+            "sourceOffsetMeters": [
+              0.0006419792771339417,
+              0.0012244860408827662,
+              -0.00041644275188446045
+            ]
           }
         }
       },
@@ -308,6 +360,56 @@
             "units": "fraction of original longest axis (normalized coordinates)",
             "method": "Triangle-centroid samples against exact BVH nearest triangle surface; not a continuous Hausdorff bound."
           }
+        },
+        "near": {
+          "geometry": "79115-0-near.json",
+          "normalMap": "79115-0-near-normal.webp",
+          "normalMapDescriptorField": "normalTexture",
+          "triangles": 7998,
+          "packedVertices": 4422,
+          "geometryBytes": 207180,
+          "normalMapBytes": 674784,
+          "shapeError": {
+            "sourceToLOD": {
+              "sampleCount": 11264,
+              "rms": 0.0008104455199704707,
+              "p95": 0.0014853206113912166,
+              "maximum": 0.003297623945400119
+            },
+            "lodToSource": {
+              "sampleCount": 7998,
+              "rms": 0.0008507191766821549,
+              "p95": 0.00160503318766132,
+              "maximum": 0.0029204944148659706
+            },
+            "units": "fraction of original longest axis (normalized coordinates)",
+            "method": "Triangle-centroid samples against exact BVH nearest triangle surface; not a continuous Hausdorff bound."
+          },
+          "lodRenormalization": {
+            "longestAxisMeters": 1.000077098608017,
+            "boundsMeters": {
+              "min": [
+                -0.2458488494157791,
+                -0.0008842375827953219,
+                -0.5000789761543274
+              ],
+              "max": [
+                0.2471931129693985,
+                0.6538817286491394,
+                0.4999981224536896
+              ]
+            },
+            "extentMeters": [
+              0.4930419623851776,
+              0.6547659662319347,
+              1.000077098608017
+            ],
+            "sourceOffsetMeters": [
+              0.0006721317768096924,
+              -0.0008842375827953219,
+              -4.042685031890869e-05
+            ]
+          }
         }
       },
       "source": {
@@ -448,6 +550,56 @@
             },
             "units": "fraction of original longest axis (normalized coordinates)",
             "method": "Triangle-centroid samples against exact BVH nearest triangle surface; not a continuous Hausdorff bound."
+          }
+        },
+        "near": {
+          "geometry": "70175-0-near.json",
+          "normalMap": "70175-0-near-normal.webp",
+          "normalMapDescriptorField": "normalTexture",
+          "triangles": 8000,
+          "packedVertices": 5338,
+          "geometryBytes": 240168,
+          "normalMapBytes": 1354302,
+          "shapeError": {
+            "sourceToLOD": {
+              "sampleCount": 11765,
+              "rms": 0.0017398153560771576,
+              "p95": 0.0034325452055782068,
+              "maximum": 0.007649972569197416
+            },
+            "lodToSource": {
+              "sampleCount": 8000,
+              "rms": 0.0018225185879902509,
+              "p95": 0.0036148862098343668,
+              "maximum": 0.007022211328148842
+            },
+            "units": "fraction of original longest axis (normalized coordinates)",
+            "method": "Triangle-centroid samples against exact BVH nearest triangle surface; not a continuous Hausdorff bound."
+          },
+          "lodRenormalization": {
+            "longestAxisMeters": 0.999204009771347,
+            "boundsMeters": {
+              "min": [
+                -0.42661046981811523,
+                0.0012319308007135987,
+                -0.4984992444515228
+              ],
+              "max": [
+                0.4275777339935303,
+                0.8640770316123962,
+                0.5007047653198242
+              ]
+            },
+            "extentMeters": [
+              0.8541882038116455,
+              0.8628451008116826,
+              0.999204009771347
+            ],
+            "sourceOffsetMeters": [
+              0.00048363208770751953,
+              0.0012319308007135987,
+              0.0011027604341506958
+            ]
           }
         }
       },
