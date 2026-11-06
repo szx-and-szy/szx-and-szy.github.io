@@ -1,0 +1,11 @@
+NASA Astromaterials3D scan derivatives
+
+NASA Astromaterials3D, Lunar Sample Laboratory Facility, Acquisition & Curation Office; supported by PDART proposal15-PDART15_2-0041.
+
+Source data are public domain according to NASA Astromaterials3D.
+https://ares.jsc.nasa.gov/astromaterials3d/faqs.htm#useof
+
+Original meshes and photographs: NASA Astromaterials3D.
+These derivatives include mesh decimation, normalization, UV-preserving export, normal baking and bounded texture lighting correction.
+The derivative albedo is a photographic approximation, not a calibrated measurement.
+NASA names identify the source and do not imply endorsement.

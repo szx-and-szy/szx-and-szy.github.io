@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "format": "BufferGeometry",
+  "binary": "79115-0-low.bin",
+  "byteLength": 8640,
+  "vertexCount": 200,
+  "triangleCount": 240,
+  "attributes": {
+    "position": {
+      "type": "Float32Array",
+      "itemSize": 3,
+      "count": 200,
+      "byteOffset": 0
+    },
+    "normal": {
+      "type": "Float32Array",
+      "itemSize": 3,
+      "count": 200,
+      "byteOffset": 2400
+    },
+    "uv": {
+      "type": "Float32Array",
+      "itemSize": 2,
+      "count": 200,
+      "byteOffset": 4800
+    },
+    "aTint": {
+      "type": "Float32Array",
+      "itemSize": 1,
+      "count": 200,
+      "byteOffset": 6400
+    }
+  },
+  "index": {
+    "type": "Uint16Array",
+    "itemSize": 1,
+    "count": 720,
+    "byteOffset": 7200
+  },
+  "bounds": {
+    "min": [
+      -0.24777637422084808,
+      0.0,
+      -0.5
+    ],
+    "max": [
+      0.24777637422084808,
+      0.6585533022880554,
+      0.5
+    ]
+  },
+  "sha256": "847ded96dde5cfa2c8734b54c931efae8f4ec3883e64e93e8daae7d2370eacd8",
+  "normalLengthMaxError": 9.791983268669924e-08,
+  "uvRange": {
+    "min": [
+      0.014523234218358994,
+      0.012881032191216946
+    ],
+    "max": [
+      0.8905189037322998,
+      0.9904491901397705
+    ]
+  },
+  "geometricTopology": {
+    "edges": 360,
+    "boundaryEdges": 0,
+    "nonManifoldEdges": 0
+  }
+}

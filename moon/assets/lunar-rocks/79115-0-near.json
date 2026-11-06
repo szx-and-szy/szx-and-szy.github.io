@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "format": "BufferGeometry",
+  "binary": "79115-0-near.bin",
+  "byteLength": 207180,
+  "vertexCount": 4422,
+  "triangleCount": 7998,
+  "attributes": {
+    "position": {
+      "type": "Float32Array",
+      "itemSize": 3,
+      "count": 4422,
+      "byteOffset": 0
+    },
+    "normal": {
+      "type": "Float32Array",
+      "itemSize": 3,
+      "count": 4422,
+      "byteOffset": 53064
+    },
+    "uv": {
+      "type": "Float32Array",
+      "itemSize": 2,
+      "count": 4422,
+      "byteOffset": 106128
+    },
+    "aTint": {
+      "type": "Float32Array",
+      "itemSize": 1,
+      "count": 4422,
+      "byteOffset": 141504
+    }
+  },
+  "index": {
+    "type": "Uint16Array",
+    "itemSize": 1,
+    "count": 23994,
+    "byteOffset": 159192
+  },
+  "bounds": {
+    "min": [
+      -0.24650196731090546,
+      0.0,
+      -0.5
+    ],
+    "max": [
+      0.24650196731090546,
+      0.6547154784202576,
+      0.5
+    ]
+  },
+  "sha256": "a0c5b2b2a27a55bcd1260098bfa03ba1cc980e154db8e037860bbf5810919236",
+  "normalLengthMaxError": 1.266598621540993e-07,
+  "uvRange": {
+    "min": [
+      0.00027094624238088727,
+      0.000400891643948853
+    ],
+    "max": [
+      0.8949171304702759,
+      0.9998622536659241
+    ]
+  },
+  "geometricTopology": {
+    "edges": 11997,
+    "boundaryEdges": 0,
+    "nonManifoldEdges": 0
+  },
+  "runtime_payload": {
+    "file": "79115-0-near.bin",
+    "parts": [
+      {
+        "file": "data/79115-0-near-geometry-gzip/000.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/79115-0-near-geometry-gzip/001.part",
+        "byte_length": 23530
+      }
+    ],
+    "compression": "gzip",
+    "packed_byte_length": 154602,
+    "byte_length": 207180,
+    "sha256": "a0c5b2b2a27a55bcd1260098bfa03ba1cc980e154db8e037860bbf5810919236"
+  },
+  "normalTexture": {
+    "file": "79115-0-near-normal.webp",
+    "mime_type": "image/webp",
+    "colorSpace": "NoColorSpace",
+    "flipY": true,
+    "space": "OpenGL tangent +X,+Y,+Z",
+    "runtime_payload": {
+      "file": "79115-0-near-normal.webp",
+      "parts": [
+        {
+          "file": "data/79115-0-near-normal-webp/000.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/79115-0-near-normal-webp/001.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/79115-0-near-normal-webp/002.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/79115-0-near-normal-webp/003.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/79115-0-near-normal-webp/004.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/79115-0-near-normal-webp/005.part",
+          "byte_length": 19424
+        }
+      ],
+      "compression": null,
+      "packed_byte_length": 674784,
+      "byte_length": 674784,
+      "sha256": "e62b3a4b4246d43123c075acd498168b5055128339fa27181938ff9f1c89c8bd"
+    }
+  }
+}

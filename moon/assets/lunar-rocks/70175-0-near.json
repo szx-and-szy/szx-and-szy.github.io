@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "format": "BufferGeometry",
+  "binary": "70175-0-near.bin",
+  "byteLength": 240168,
+  "vertexCount": 5338,
+  "triangleCount": 8000,
+  "attributes": {
+    "position": {
+      "type": "Float32Array",
+      "itemSize": 3,
+      "count": 5338,
+      "byteOffset": 0
+    },
+    "normal": {
+      "type": "Float32Array",
+      "itemSize": 3,
+      "count": 5338,
+      "byteOffset": 64056
+    },
+    "uv": {
+      "type": "Float32Array",
+      "itemSize": 2,
+      "count": 5338,
+      "byteOffset": 128112
+    },
+    "aTint": {
+      "type": "Float32Array",
+      "itemSize": 1,
+      "count": 5338,
+      "byteOffset": 170816
+    }
+  },
+  "index": {
+    "type": "Uint16Array",
+    "itemSize": 1,
+    "count": 24000,
+    "byteOffset": 192168
+  },
+  "bounds": {
+    "min": [
+      -0.4274342954158783,
+      0.0,
+      -0.4999999701976776
+    ],
+    "max": [
+      0.4274342954158783,
+      0.8635324239730835,
+      0.4999999701976776
+    ]
+  },
+  "sha256": "aadb52ace9168f882057a65a4f1ed848f05eb86c1c81f68d7635a3265cb51e7f",
+  "normalLengthMaxError": 1.266598621540993e-07,
+  "uvRange": {
+    "min": [
+      0.0012329032178968191,
+      0.003073937725275755
+    ],
+    "max": [
+      0.9999330043792725,
+      0.9962260127067566
+    ]
+  },
+  "geometricTopology": {
+    "edges": 12000,
+    "boundaryEdges": 0,
+    "nonManifoldEdges": 0
+  },
+  "runtime_payload": {
+    "file": "70175-0-near.bin",
+    "parts": [
+      {
+        "file": "data/70175-0-near-geometry-gzip/000.part",
+        "byte_length": 131072
+      },
+      {
+        "file": "data/70175-0-near-geometry-gzip/001.part",
+        "byte_length": 35526
+      }
+    ],
+    "compression": "gzip",
+    "packed_byte_length": 166598,
+    "byte_length": 240168,
+    "sha256": "aadb52ace9168f882057a65a4f1ed848f05eb86c1c81f68d7635a3265cb51e7f"
+  },
+  "normalTexture": {
+    "file": "70175-0-near-normal.webp",
+    "mime_type": "image/webp",
+    "colorSpace": "NoColorSpace",
+    "flipY": true,
+    "space": "OpenGL tangent +X,+Y,+Z",
+    "runtime_payload": {
+      "file": "70175-0-near-normal.webp",
+      "parts": [
+        {
+          "file": "data/70175-0-near-normal-webp/000.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/70175-0-near-normal-webp/001.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/70175-0-near-normal-webp/002.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/70175-0-near-normal-webp/003.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/70175-0-near-normal-webp/004.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/70175-0-near-normal-webp/005.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/70175-0-near-normal-webp/006.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/70175-0-near-normal-webp/007.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/70175-0-near-normal-webp/008.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/70175-0-near-normal-webp/009.part",
+          "byte_length": 131072
+        },
+        {
+          "file": "data/70175-0-near-normal-webp/010.part",
+          "byte_length": 43582
+        }
+      ],
+      "compression": null,
+      "packed_byte_length": 1354302,
+      "byte_length": 1354302,
+      "sha256": "06044159a6a7b5d664105fad75b69a4e884b30bf78b63a0439ddb41d43d6bb6c"
+    }
+  }
+}

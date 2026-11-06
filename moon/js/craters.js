@@ -16,15 +16,15 @@
  * 间距压到 1–2 个直径之后，坑缘相接、溅射毯叠加，地面才是「被撞击改造过的」，
  * 而不是「没被动过的平面」。
  *
- * 每个坑再乘一个 0.5–1.0 的退化系数：真实月面同时存在新鲜坑与磨平的老坑，
- * 统一深度会让整片地面像刚被轰击过。
+ * 退化同时改变深度、坑缘高度和宽度：多数为浅而宽的老坑，少量保留新鲜坑缘。
+ * 剖面与溅射毯连续，外缘平滑回到零，避免地形网格采到一圈台阶。
  */
 
 import { hash2 } from './noise.js';
 
 /** 坑的剖面参数。调形貌只动这一处 */
 const PROFILE = {
-  depth: 0.19,       // 深径比（新鲜小坑）
+  depth: 0.19,       // 新鲜坑深度 / 半径
   rim: 0.06,         // 坑缘高度 / 半径
   rimWidth: 0.22,    // 坑缘高斯宽度 / 半径
   ejecta: 0.35,      // 溅射毯高度 / 坑缘高度
@@ -44,13 +44,25 @@ const BANDS = [
     seed: { probe: 4311, x: 4327, z: 4339, r: 4349, deg: 4357, step: 31 } },
 ];
 
-/** 把「半径 + 退化系数」折算成逐坑常量，避免每次采样重复乘法与除法 */
-function crater(x, z, r, deg) {
+const smoothstep = (lo, hi, x) => {
+  const t = Math.max(0, Math.min(1, (x - lo) / (hi - lo)));
+  return t * t * (3 - 2 * t);
+};
+
+/** 半径与位置不变，退化使坑变浅、坑缘降低并展宽。 */
+function crater(x, z, r, freshness) {
+  const age = 1 - freshness;
+  const angle = hash2(x, z, 6173) * Math.PI * 2;
   return {
     x, z, r,
     invR: 1 / r,
-    depth: r * PROFILE.depth * deg,
-    rim: r * PROFILE.rim * deg,
+    depth: r * PROFILE.depth * (0.14 + 0.86 * freshness),
+    rim: r * PROFILE.rim * (0.05 + 0.95 * freshness * freshness),
+    rimWidth: PROFILE.rimWidth + 0.30 * age,
+    wallPower: 2.0 + 0.8 * age,
+    axis: 0.94 + 0.12 * hash2(x, z, 6197),
+    cos: Math.cos(angle), sin: Math.sin(angle),
+    erosion: 0.12 + 0.32 * age,
     reach2: (r * PROFILE.reach) ** 2,
   };
 }
@@ -71,12 +83,12 @@ function makeBand({ cell, min, max, rMin, rMax, pow, seed }) {
     for (let k = 0; k < n; k++) {
       const s = k * seed.step;
       const r = rMin + (rMax - rMin) * Math.pow(hash2(cx, cz, seed.r + s), pow);
-      // 0.5–1.0：老坑被月壤填平，坑缘也磨圆
-      const deg = 0.5 + 0.5 * hash2(cx, cz, seed.deg + s);
+      // 老坑占多数；同尺寸也有不同深度与残余坑缘。
+      const freshness = Math.pow(hash2(cx, cz, seed.deg + s), 2.2);
       list.push(crater(
         cx * cell + hash2(cx, cz, seed.x + s) * cell,
         cz * cell + hash2(cx, cz, seed.z + s) * cell,
-        r, deg,
+        r, freshness,
       ));
     }
     if (cache.size >= CACHE_LIMIT) cache.clear();
@@ -98,20 +110,30 @@ const NAMED_CRATERS = [
   { name: 'Henry', x: 700, z: 600, r: 50 },
   { name: 'Shakespeare', x: 1200, z: 2400, r: 200 },
   { name: 'Brontë', x: -1500, z: -2200, r: 150 },
-].map((c) => ({ ...crater(c.x, c.z, c.r, 1), name: c.name }));
+].map((c) => ({ ...crater(c.x, c.z, c.r, 0.45 + 0.35 * hash2(c.x, c.z, 6151)), name: c.name }));
 
 function craterHeight(dx, dz, c) {
   const q = dx * dx + dz * dz;
   if (q > c.reach2) return 0;
 
-  const r = Math.sqrt(q) * c.invR;
+  const radial = Math.sqrt(q);
+  const rawR = radial * c.invR;
+  const u = dx * c.cos + dz * c.sin;
+  const v = -dx * c.sin + dz * c.cos;
+  const ellipticalR = Math.hypot(u / c.axis, v * c.axis) * c.invR;
+  // 轻微不圆只作用于坑体；外缘恢复圆形，保持同一个有限支撑边界。
+  const r = rawR + (ellipticalR - rawR) * (1 - smoothstep(1.2, 2.3, rawR));
   let h = 0;
-  if (r < 1) h -= c.depth * (1 - r * r);
+  if (r < 1) h -= c.depth * Math.pow(1 - r * r, c.wallPower);
 
-  const t = (r - 1) / PROFILE.rimWidth;
-  h += c.rim * Math.exp(-t * t);
-  if (r > 1) h += c.rim * PROFILE.ejecta * Math.exp(-(r - 1) / PROFILE.ejectaDecay);
-  return h;
+  const nx = u / Math.max(radial, 1e-8);
+  const brokenRim = 1 - c.erosion * (0.5 + 0.5 * (4 * nx * nx * nx - 3 * nx));
+  const t = (r - 1) / c.rimWidth;
+  h += c.rim * Math.exp(-t * t) * brokenRim * smoothstep(0.0, 0.45, r);
+  // 溅射毯跨过坑缘平滑长出，不再在 r=1 突然多出一层高度。
+  h += c.rim * PROFILE.ejecta * smoothstep(0.78, 1.22, r)
+    * Math.exp(-(r - 1) / PROFILE.ejectaDecay);
+  return h * (1 - smoothstep(1.6, PROFILE.reach, rawR));
 }
 
 /** 3×3 邻域：胞宽已按 2.4 倍最大半径取，邻胞的坑不会漏 */
@@ -129,14 +151,12 @@ function sumBand(band, x, z) {
   return h;
 }
 
-export function cratersAt(x, z, detail = CRATER_DETAIL.NEAR) {
+export function cratersAt(x, z, detail = CRATER_DETAIL.NEAR, includeLarge = true) {
   let h = 0;
   if (detail >= CRATER_DETAIL.NEAR) h += sumBand(bands[0], x, z);
   if (detail >= CRATER_DETAIL.MID) h += sumBand(bands[1], x, z);
-  h += sumBand(bands[2], x, z);
+  if (includeLarge) h += sumBand(bands[2], x, z);
 
-  for (const c of NAMED_CRATERS) {
-    h += craterHeight(x - c.x, z - c.z, c);
-  }
+  if (includeLarge) for (const c of NAMED_CRATERS) h += craterHeight(x - c.x, z - c.z, c);
   return h;
 }

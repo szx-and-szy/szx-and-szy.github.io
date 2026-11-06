@@ -1,11 +1,7 @@
 /*
- * app.js — 月面第一人称漫游主程序
- *
- * 渲染原则（都按真空 + 真实光照来）：
- *  - 场景只有一盏方向光（太阳），无环境光、无补光 => 背光面纯黑，和照片一致
- *  - 天空纯黑，无雾、无大气散射
- *  - 地球用真实纹理 + 同一盏太阳光照明，因此相位是算出来的，不是画上去的
- *  - 重力 1.62 m/s²，眼高 1.7 m，走速 1.6 m/s（阿波罗月面行走实测量级）
+ * First-person Taurus-Littrow reconstruction: directional sunlight, weak indirect light,
+ * no atmospheric scattering, fixed photographic exposure and camera-relative celestial bodies.
+ * Terrain and regional reflectance parameters retain their measurement provenance.
  */
 
 import * as THREE from 'three';
@@ -17,13 +13,24 @@ import { ShaderPass } from '../vendor/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from '../vendor/postprocessing/UnrealBloomPass.js';
 import { FXAAShader } from '../vendor/shaders/FXAAShader.js';
 import { OutputPass } from '../vendor/postprocessing/OutputPass.js';
-import { SITE, START, EYE_HEIGHT, GRAVITY, MOVE_SPEED, JUMP_SPEED, FOV, BASE_EXPOSURE, SHADOW } from './config.js';
+import { SITE, START, EYE_HEIGHT, GRAVITY, MOVE_SPEED, JUMP_SPEED, FOV, BASE_EXPOSURE } from './config.js';
 import { FilmShader, SUN_GLARE_SHADER } from './shaders.js';
+import { loadElevation, elevationInfo } from './elevation.js';
+import { loadRockScans } from './rock-scans.js';
+import { loadReflectance, measuredReflectance } from './reflectance.js';
+import { createLunarShadows } from './shadows.js';
+import { loadNormalDetail, measuredNormalDetail } from './normal-detail.js';
 
 const $ = (id) => document.getElementById(id);
 
 
 const astro = computeScene(SITE.date, SITE);
+const [, rockScans] = await Promise.all([
+  loadElevation(SITE, astro.sun.world),
+  loadRockScans(matchMedia('(pointer: coarse)').matches),
+  loadReflectance(SITE),
+  loadNormalDetail(SITE, matchMedia('(pointer: coarse)').matches),
+]);
 
 
 /* ---------------- 渲染器 ---------------- */
@@ -44,9 +51,8 @@ const SS = (() => {
 renderer.setPixelRatio(Math.min(devicePixelRatio * SS, 2.6));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-// 月面是绝对硬阴影（无大气散射），PCFSoft 的宽核会把 20 cm 碎块的影子糊成一摊。
-// PCFShadowMap 的 3×3 采样在 2.2 cm texel 下边缘约 4 cm，接近照片的锐度。
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// 近场采用窄核阴影；区域阴影另按太阳的有限角直径计算过渡。
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = BASE_EXPOSURE;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -54,7 +60,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
 
-const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.1, 30000);
+const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.1, 300000);
 camera.rotation.order = 'YXZ';
 scene.add(camera);
 
@@ -68,62 +74,25 @@ const quality = isTouch ? 'low' : 'high';
 const sunDir = new THREE.Vector3(...astro.sun.world).normalize();
 const earthDir = new THREE.Vector3(...astro.earth.world).normalize();
 
-const sunLight = new THREE.DirectionalLight(0xfff6ea, 5.2);
-sunLight.castShadow = true;
+const lunarShadows = createLunarShadows({ scene, camera, renderer, sunDir, quality });
 
-/*
- * 阴影精度必须按「低太阳角」标定，这是之前影子脱离石块的根因。
- *
- * shadow map 的 texel 是垂直于光线方向的尺寸，投到地面上要除以 sin(太阳高度)：
- * 太阳只有 13.85° 时，沿地面方向被拉伸 1/sin(13.85°) ≈ 4.2 倍。
- * 旧配置 180 m / 2048 = 8.8 cm 的 texel，落到地面上就是 37 cm 的有效分辨率，
- * 20–50 cm 的石块根本留不住自己的影子；为了压掉阴影 acne 又把 normalBias 加到 3.5 cm，
- * 而 normalBias 造成的偏移动量约为 bias/tan(太阳高度)，于是影子被整体推开十几厘米，
- * 石头和影子之间就出现那道缝。
- *
- * 现在：范围收到 ±45 m、贴图 4096，texel 2.2 cm（地面约 9 cm），normalBias 降到 6 mm，
- * 偏移量约 2.4 cm，缝隙落到石块自身轮廓以内。范围外没有影子——但那个距离上的石块
- * 只有几个像素，看不出来；近处 45 m 的锐利才是照片的观感来源。
- */
-const shadowSpan = SHADOW.span;
-const shadowMap = Math.min(isTouch ? SHADOW.mapLow : SHADOW.mapHigh, renderer.capabilities.maxTextureSize);
-sunLight.shadow.mapSize.set(shadowMap, shadowMap);
-sunLight.shadow.camera.left = -shadowSpan;
-sunLight.shadow.camera.right = shadowSpan;
-sunLight.shadow.camera.top = shadowSpan;
-sunLight.shadow.camera.bottom = -shadowSpan;
-// 光源挂在 420 m 外，深度范围只留 250–640，深度精度全给这一段
-sunLight.shadow.camera.near = SHADOW.near;
-sunLight.shadow.camera.far = SHADOW.far;
-sunLight.shadow.bias = SHADOW.bias;
-sunLight.shadow.normalBias = SHADOW.normalBias;
-sunLight.shadow.radius = SHADOW.radius;
-sunLight.shadow.camera.updateProjectionMatrix();
-scene.add(sunLight);
-scene.add(sunLight.target);
-
-// 地球反照光：满地球时月面背光侧照度约 0.02–0.05 lux 量级，
-// 加一层极弱冷色环境光，让背对太阳的地面保留轮廓而不是纯黑（阿波罗宇航员目视亦如此）
-const earthShine = new THREE.HemisphereLight(0x2f3b57, 0x17140f, 0.16);
+// 极弱的间接光近似；按白昼摄影曝光，背光面仍接近黑色。
+const earthShine = new THREE.HemisphereLight(0xb0bdcf, 0x4b4946, 0.004);
 scene.add(earthShine);
 
 /* ---------------- 地形 ---------------- */
 
-const terrain = createTerrain({ quality, sunDir, start: START });
+const terrain = createTerrain({ quality, sunDir, start: START, rockScans, sunAngularRadius: THREE.MathUtils.degToRad(astro.sun.angDiamDeg) / 2 });
 scene.add(terrain.group);
+terrain.group.traverse(o => { if (o.material) lunarShadows.setupMaterial(o.material); });
 
 /* ---------------- 天体 ---------------- */
 
-const SKY_RADIUS = 11000;
+const SKY_RADIUS = 100000;
 
 // 太阳：角直径 0.53°，按距离换算实际半径
 const sunAngRad = THREE.MathUtils.degToRad(astro.sun.angDiamDeg) / 2;
-/*
- * 太阳的亮度必须给到 HDR 量级（线性值 3 以上），不能只给 1.0。
- * 月面上太阳的照度约 1.3×10⁵ lux，比月面本身亮 6 个数量级；
- * 给 1.0 的话过曝刚好卡在白色，既不会有强溢光，也就不可能"刺眼"。
- * 3.2 经过 ACES 仍然是白，但 bloom 是在 tone mapping 之前取样的，会明显溢出。
- */
+// HDR 太阳盘和局部光学溢出用于摄影观感；不是绝对辐亮度校准。
 const sunDisc = new THREE.Mesh(
   new THREE.SphereGeometry(1, 24, 16),
   new THREE.MeshBasicMaterial({ color: 0xffffff })
@@ -152,7 +121,7 @@ let sunSprite;
     map: tex, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true,
     transparent: true, opacity: 0.95,
   }));
-  sunSprite.scale.setScalar(SKY_RADIUS * 0.095);
+  sunSprite.scale.setScalar(SKY_RADIUS * 0.024);
   sunSprite.position.copy(sunDir).multiplyScalar(SKY_RADIUS * 0.999);
   scene.add(sunSprite);
 }
@@ -169,7 +138,7 @@ earthTex.anisotropy = 4;
 
 const earthMesh = new THREE.Mesh(
   new THREE.SphereGeometry(1, 64, 48),
-  new THREE.MeshStandardMaterial({ map: earthTex, color: 0xffffff, roughness: 0.62, metalness: 0, emissive: 0x2b405f, emissiveIntensity: 0.75 })
+  new THREE.MeshStandardMaterial({ map: earthTex, color: 0xffffff, roughness: 1, metalness: 0 })
 );
 earthMesh.scale.setScalar(earthRadius);
 earthGroup.add(earthMesh);
@@ -177,30 +146,7 @@ earthGroup.add(earthMesh);
 // 地球自转轴倾角 + 朝向（只做视觉，不参与相位计算）
 earthMesh.rotation.z = THREE.MathUtils.degToRad(23.44);
 
-// 星空：月球白昼看不见星（阿波罗照片天空纯黑），只留近乎不可见的一层，避免和太阳混淆
-{
-  const N = 2600;
-  const pos = new Float32Array(N * 3);
-  const col = new Float32Array(N * 3);
-  for (let i = 0; i < N; i++) {
-    const u = Math.random() * 2 - 1;
-    const th = Math.random() * Math.PI * 2;
-    const r = Math.sqrt(1 - u * u);
-    pos[i * 3] = Math.cos(th) * r * 20000;
-    pos[i * 3 + 1] = u * 20000;
-    pos[i * 3 + 2] = Math.sin(th) * r * 20000;
-    const b = 0.35 + Math.pow(Math.random(), 3) * 0.65;
-    col[i * 3] = b; col[i * 3 + 1] = b * 0.98; col[i * 3 + 2] = b * 0.94;
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const stars = new THREE.Points(geo, new THREE.PointsMaterial({
-    size: 1.6, sizeAttenuation: false, vertexColors: true,
-    transparent: true, opacity: 0.035, depthWrite: false, depthTest: true,
-  }));
-  scene.add(stars);
-}
+// 白昼曝光下不绘制恒星，保留无大气天空的纯黑。
 
 /* ---------------- 后处理 ---------------- */
 
@@ -232,25 +178,15 @@ composer.addPass(fxaaPass);
 
 // 胶片颗粒 + 暗角：模拟 Apollo 所用的 70 mm 胶片与广角镜
 const filmPass = new ShaderPass(FilmShader);
-composer.addPass(filmPass);
 
-// 必须是最后一个 pass：EffectComposer 的 render target 保持线性空间，
-// 色调映射与 sRGB 转换只在直接渲染到屏幕时自动发生，中间层不会
+// 把线性场景转为显示空间。后续仅叠加镜头散射和低强度胶片颗粒。
 composer.addPass(new OutputPass());
 
-/*
- * 太阳眩光（放在 OutputPass 之后，直接在显示空间叠加）。
- *
- * 月球上没有大气，太阳是一个 0.53° 的锐利白盘——但那不代表"能舒服地看"。
- * 真实情况是照度 1.3×10⁵ lux，直视会瞬间致盲，人眼会立刻收缩瞳孔、流泪，
- * 视野里只剩一片白和被烧出来的残影。
- *
- * 这里做两件事：太阳附近叠加强过曝（核心 + 光晕 + 光圈叶片的六道星芒），
- * 同时把周围画面压暗——"亮处更亮、暗处更暗"才是刺眼的来源，
- * 只加白只会变成一个更大的白点，反而更不刺眼。
- */
+// 太阳附近的局部镜头散射。固定曝光，不按观察方向改变整幅画面亮度。
 const sunGlarePass = new ShaderPass(SUN_GLARE_SHADER);
 composer.addPass(sunGlarePass);
+// 颗粒在显示空间处理，且强度随信号消失，保持未曝光天空的黑位。
+composer.addPass(filmPass);
 
 const _camDir = new THREE.Vector3();
 const _camRight = new THREE.Vector3();
@@ -310,12 +246,7 @@ function updateSunGlare() {
   const thDiag = Math.atan(Math.hypot(tanX, tanY)) * 57.2957795;
   u.uGlare.value = falloff(th, thDiag - 4, thDiag + 5);
 
-  // 收曝光分两部分：
-  //   前一项是"盯着看"——只有视轴快对上太阳时才陡增，主导画面变暗；
-  //   后一项是"在视野里"——太阳只要还在前方就有一层底噪，不随视线转开而消失。
-  // 只有前一项＝边缘完全不刺眼；只有后一项＝开场视角平白发灰。
-  const centered = Math.pow(falloff(th, 0, 50), 1.6);
-  sunVis = 0.84 * centered + 0.16 * falloff(th, 34, 84);
+  sunVis = u.uGlare.value;
 }
 
 updateGlareFrame();
@@ -342,6 +273,8 @@ function applyLook() {
 }
 
 addEventListener('keydown', (e) => {
+  if (e.code === 'Escape') { document.exitPointerLock(); state.keys.clear(); return; }
+  if (e.code === 'KeyH') { document.body.classList.toggle('clean'); return; }
   if (e.code === 'KeyE') { faceEarth(); return; }
   if (e.code === 'KeyQ') { faceSun(); return; }
   state.keys.add(e.code);
@@ -351,6 +284,7 @@ addEventListener('keydown', (e) => {
 });
 
 addEventListener('keyup', (e) => state.keys.delete(e.code));
+addEventListener('blur', () => { state.keys.clear(); state.touchMove.active = false; });
 
 let locked = false;
 canvas.addEventListener('click', () => {
@@ -383,16 +317,20 @@ function faceEarth() {
   applyLook();
 }
 
-/** 开场：侧光方位，太阳与谷地同时入画（正对地球会背光，地面全黑） */
+/** 北向侧光开场，保留地面、碎石与北山体的层次。 */
 function faceIntro() {
-  state.yaw = THREE.MathUtils.degToRad(-60);
-  state.pitch = THREE.MathUtils.degToRad(8);
+  state.yaw = THREE.MathUtils.degToRad(0);
+  state.pitch = THREE.MathUtils.degToRad(-5);
   applyLook();
 }
 
 // 调试/联调钩子：便于无头浏览器定点截图，不影响正常交互
 window.__moon = {
   astro,
+  get elevation() { return elevationInfo(); },
+  get reflectance() { return measuredReflectance()?.metadata ?? null; },
+  get normalDetail() { const d = measuredNormalDetail(); return d ? { metadata: d.metadata, decodedSize: d.decodedSize } : null; },
+  get shadowSettings() { return lunarShadows.settings; },
   camera,
   renderer,
   state,
@@ -411,6 +349,7 @@ window.__moon = {
   get sunVis() { return sunVis; },
   get exposure() { return renderer.toneMappingExposure; },
   faceSun,
+  faceIntro,
   terrain,                 // 网格与实例缓冲，供截图对账用
   heightAt: terrain.heightAt,
   earthDir: earthDir.toArray(),
@@ -517,49 +456,47 @@ function animate() {
   camera.position.x += dx;
   camera.position.z += dz;
 
+  // Collision reads the mesh that will be rendered in this frame.
+  terrain.update(camera.position.x, camera.position.z);
+
   // 垂直：跳跃与落地
   if (state.keys.has('Space') && state.onGround) {
     state.vel = JUMP_SPEED;
     state.onGround = false;
   }
 
-  state.vel -= GRAVITY * dt;
-  camera.position.y += state.vel * dt;
-
-  const groundY = terrain.heightAt(camera.position.x, camera.position.z) + EYE_HEIGHT;
-  if (camera.position.y <= groundY) {
-    camera.position.y = groundY;
+  const groundY = terrain.heightAt(camera.position.x, camera.position.z);
+  if (state.onGround) {
+    state.feet = groundY;
     state.vel = 0;
-    state.onGround = true;
   } else {
-    state.onGround = false;
+    state.vel -= GRAVITY * dt;
+    state.feet += state.vel * dt;
+    if (state.feet <= groundY) {
+      state.feet = groundY;
+      state.vel = 0;
+      state.onGround = true;
+    }
   }
 
   // 行走时的轻微起伏
+  let bobOffset = 0;
   if (moving && state.onGround) {
     state.bob += dt * 7.5;
-    camera.position.y += Math.sin(state.bob) * 0.018;
+    bobOffset = Math.sin(state.bob) * 0.018;
   }
+  // Visual bob must not become accumulated physical height or trigger a fall.
+  camera.position.y = state.feet + EYE_HEIGHT + bobOffset;
 
-  // 地形分档重建
-  terrain.update(camera.position.x, camera.position.z);
-
-  // 太阳光跟随（阴影相机跟着人走）
-  sunLight.position.copy(camera.position).addScaledVector(sunDir, 420);
-  sunLight.target.position.copy(camera.position);
+  // Cascades keep the near shadow grid precise while covering the walking view.
+  lunarShadows.update();
+  // 天体方向与视直径不应随着步行产生近景视差；放在全部地形之后。
+  sunDisc.position.copy(camera.position).addScaledVector(sunDir, SKY_RADIUS);
+  sunSprite.position.copy(camera.position).addScaledVector(sunDir, SKY_RADIUS * 0.999);
+  earthGroup.position.copy(camera.position).addScaledVector(earthDir, SKY_RADIUS);
 
   updateSunGlare();
-  // 直视太阳时的"收曝光"：这是刺眼的核心，不是靠屏幕叠加白光。
-  // 真实相机/人眼对 1.3×10⁵ lux 会立刻把曝光拉下去，除了太阳，整个画面都沉下去。
-  const exposure = BASE_EXPOSURE * (1 - 0.70 * sunVis);
-  renderer.toneMappingExposure = exposure;
-
-  // 太阳自身的辐射亮度是常数，曝光收缩只该作用于"周围"，不该把太阳一并压暗。
-  // 不补偿的话，曝光从 0.56 掉到 0.21，太阳也跟着掉三倍，
-  // 结果就是"盯着看"和"余光看"一样亮——比例没变，怎么都不刺眼。
-  const sunK = BASE_EXPOSURE / exposure;   // 1 → 2.63
-  sunDisc.material.color.setRGB(3.2 * sunK, 3.06 * sunK, 2.86 * sunK);
-  sunSprite.material.color.setScalar(sunK);
+  renderer.toneMappingExposure = BASE_EXPOSURE;
 
   filmPass.material.uniforms.uTime.value = clock.elapsedTime;
 
