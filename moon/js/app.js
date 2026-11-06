@@ -456,32 +456,37 @@ function animate() {
   camera.position.x += dx;
   camera.position.z += dz;
 
+  // Collision reads the mesh that will be rendered in this frame.
+  terrain.update(camera.position.x, camera.position.z);
+
   // 垂直：跳跃与落地
   if (state.keys.has('Space') && state.onGround) {
     state.vel = JUMP_SPEED;
     state.onGround = false;
   }
 
-  state.vel -= GRAVITY * dt;
-  camera.position.y += state.vel * dt;
-
-  const groundY = terrain.heightAt(camera.position.x, camera.position.z) + EYE_HEIGHT;
-  if (camera.position.y <= groundY) {
-    camera.position.y = groundY;
+  const groundY = terrain.heightAt(camera.position.x, camera.position.z);
+  if (state.onGround) {
+    state.feet = groundY;
     state.vel = 0;
-    state.onGround = true;
   } else {
-    state.onGround = false;
+    state.vel -= GRAVITY * dt;
+    state.feet += state.vel * dt;
+    if (state.feet <= groundY) {
+      state.feet = groundY;
+      state.vel = 0;
+      state.onGround = true;
+    }
   }
 
   // 行走时的轻微起伏
+  let bobOffset = 0;
   if (moving && state.onGround) {
     state.bob += dt * 7.5;
-    camera.position.y += Math.sin(state.bob) * 0.018;
+    bobOffset = Math.sin(state.bob) * 0.018;
   }
-
-  // 地形分档重建
-  terrain.update(camera.position.x, camera.position.z);
+  // Visual bob must not become accumulated physical height or trigger a fall.
+  camera.position.y = state.feet + EYE_HEIGHT + bobOffset;
 
   // Cascades keep the near shadow grid precise while covering the walking view.
   lunarShadows.update();

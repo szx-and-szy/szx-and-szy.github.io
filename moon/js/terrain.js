@@ -17,6 +17,8 @@ import { fbm, hash2 } from './noise.js';
 import { elevationShadow, elevationInfo } from './elevation.js';
 import { measuredReflectance } from './reflectance.js';
 import { measuredNormalDetail } from './normal-detail.js';
+import { createSubgrid } from './subgrid.js';
+import { makeSquareTriangleSampler } from './subgrid-field.js';
 
 /* ---------------- 对外接口 ---------------- */
 
@@ -524,6 +526,18 @@ float hapkeH2012(float muEff, float w) {
 
   const group = new THREE.Group();
   group.add(ground, mid, far);
+  let coarseAt = makeSquareTriangleSampler(ground.geometry.getAttribute('position').array, groundSeg + 1, start.x, start.z, 240);
+  let subgrid = null;
+  function surfaceHeightAt(x, z) {
+    const fine = subgrid?.heightAt(x, z);
+    if (Number.isFinite(fine) && subgrid.replacesBaseAt(x, z)) return fine;
+    const coarse = coarseAt(x, z);
+    const q = Math.max(Math.abs(x - nearCenter.value.x), Math.abs(z - nearCenter.value.y));
+    const regional = q >= 118 ? regionalHeightAt(x, z) : NaN;
+    // Overlap bands draw both surfaces. Contact follows the upper visible face.
+    const candidates = [fine, coarse, regional].filter(Number.isFinite);
+    return candidates.length ? Math.max(...candidates) : heightAt(x, z);
+  }
 
   /* ---------------- 石块 ----------------
    *
@@ -696,6 +710,7 @@ float hapkeH2012(float muEff, float w) {
     m.castShadow = true;
     m.receiveShadow = true;
     m.frustumCulled = false;
+    m.count = 0;
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     rockMeshes.push(m);
     group.add(m);
@@ -712,6 +727,7 @@ float hapkeH2012(float muEff, float w) {
       mesh.userData.scanLod = level;
       mesh.castShadow = mesh.receiveShadow = true;
       mesh.frustumCulled = false;
+      mesh.count = 0;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       const index = rockMeshes.length;
       rockMeshes.push(mesh);
@@ -724,6 +740,7 @@ float hapkeH2012(float muEff, float w) {
   const dummy = new THREE.Object3D();
   const tmpColor = new THREE.Color();
   const slot = new Array(rockMeshes.length).fill(0);
+  for (const mesh of rockMeshes) mesh.userData.surfaceSinks = new Float32Array(mesh.instanceMatrix.count);
   let rocksCenter = { ...start };
 
   /** 低频噪声决定石块成簇还是稀疏。月面碎石从来不是均匀撒开的，坑缘和山麓才密集 */
@@ -752,7 +769,8 @@ float hapkeH2012(float muEff, float w) {
     const m = rockMeshes[v];
     if (slot[v] >= m.instanceMatrix.count) return;
     const k = slot[v]++;
-    dummy.position.set(x, heightAt(x, z) - sink, z);
+    dummy.position.set(x, surfaceHeightAt(x, z) - sink, z);
+    m.userData.surfaceSinks[k] = sink;
     // 只绕 Y 自由旋转，倾角压到 ±4°：倾角一大，压平的底面就翘起来，影子又脱开
     dummy.rotation.set(
       (rnd(i, 61) - 0.5) * 0.14,
@@ -819,9 +837,34 @@ float hapkeH2012(float muEff, float w) {
   }
 
   function recenterGround(cx, cz) {
+    // Retain the same world lattice: common interior triangles must not change
+    // when the coarse patch follows the player.
+    const step = 240 / groundSeg;
+    cx = start.x + Math.round((cx - start.x) / step) * step;
+    cz = start.z + Math.round((cz - start.z) / step) * step;
     buildSquare(240, groundSeg, cx, cz, 1 / REGOLITH_TILE_M, undefined, { edgeHeightAt: regionalHeightAt, geometry: ground.geometry });
+    coarseAt = makeSquareTriangleSampler(ground.geometry.getAttribute('position').array, groundSeg + 1, cx, cz, 240);
     nearCenter.value.set(cx, cz);
+    subgrid?.setCoarse(cx, cz);
   }
+
+  function refreshRockHeights() {
+    // Recompute absolute height; accumulating deltas would make rocks drift.
+    for (const mesh of rockMeshes) {
+      const values = mesh.instanceMatrix.array, sinks = mesh.userData.surfaceSinks;
+      for (let i = 0; i < mesh.count; i++) {
+        const k = i * 16;
+        values[k + 13] = surfaceHeightAt(values[k + 12], values[k + 14]) - sinks[i];
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  subgrid = createSubgrid({ ground, material, group,
+    enabled: hi && new URLSearchParams(location.search).get('subgrid') !== '0',
+    uvScale: 1 / REGOLITH_TILE_M, onCommit: refreshRockHeights });
+  subgrid.setCoarse(start.x, start.z);
+  subgrid.update(start.x, start.z);
 
   placeRocks(start.x, start.z);
 
@@ -831,18 +874,22 @@ float hapkeH2012(float muEff, float w) {
   return {
     group,
     materials: material,
-    heightAt,
+    heightAt: surfaceHeightAt,
+    baseHeightAt: heightAt,
+    subgrid,
     regionalHeightAt,
     /** 每帧调用：按距离分档重建网格，保证脚下始终是高精度 */
     update(px, pz, force = false) {
-      if (force || Math.hypot(px - lastRocks.x, pz - lastRocks.z) > 6) {
-        placeRocks(px, pz);
-        lastRocks = { x: px, z: pz };
-      }
-      if (force || Math.hypot(px - lastGround.x, pz - lastGround.z) > 40) {
+      const groundChanged = force || Math.hypot(px - lastGround.x, pz - lastGround.z) > 40;
+      if (groundChanged) {
         recenterGround(px, pz);
         lastGround = { x: px, z: pz };
       }
+      subgrid.update(px, pz);
+      if (force || Math.hypot(px - lastRocks.x, pz - lastRocks.z) > 6) {
+        placeRocks(px, pz);
+        lastRocks = { x: px, z: pz };
+      } else if (groundChanged) refreshRockHeights();
     },
   };
 }
